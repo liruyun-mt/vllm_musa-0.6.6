@@ -21,8 +21,11 @@ registry.mthreads.com/mcconline/musa-pytorch-release-public:rc3.1.0-v1.3.0-S4000
 # 使用说明
 
 ```
+git clone https://github.com/liruyun-mt/vllm_musa-0.6.6.git
 cd vllm_musa-0.6.6
 # vllm 编译 
+pip3 install ray[default]==2.10.0
+pip3 install transformers==4.44.0
 bash build_musa.sh
 ```
 
