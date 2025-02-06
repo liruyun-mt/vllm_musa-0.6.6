@@ -1,4 +1,4 @@
-# vllm_musa_v0.6.6
+# vllm_musa-0.6.6
 此仓库用于 musify vllm v0.6.6 to MUSA device
 
 # 镜像
