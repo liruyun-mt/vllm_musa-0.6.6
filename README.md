@@ -21,7 +21,7 @@ registry.mthreads.com/mcconline/musa-pytorch-release-public:rc3.1.0-v1.3.0-S4000
 # 使用说明
 
 ```
-cd vllm_musa_v0.6.6
+cd vllm_musa-0.6.6
 # vllm 编译 
 bash build_musa.sh
 ```
@@ -35,7 +35,8 @@ bash build_musa.sh
 > musify 脚本来源于 vllm_musa-0.4.2 : https://github.com/MooreThreads/vllm_musa/blob/main/musa_porting.py
 
 ```
-cd vllm_musa_v0.6.6
+cd vllm-v0.6.6
+# 在vllm v0.6.6 的基础上做 musify
 python3 musa_porting.py
 ```
 
@@ -49,23 +50,8 @@ bash build_musa.sh
 ```
 
 # 报错记录
-* Vllm requirements 不满足
-```
-ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
-vllm 0.6.6 requires nvidia-ml-py>=12.560.30, which is not installed.
-vllm 0.6.6 requires xformers==0.0.28.post3; platform_system == "Linux" and platform_machine == "x86_64", which is not installed.
-vllm 0.6.6 requires torch==2.5.1, but you have torch 2.2.0a0+git8ac9b20 which is incompatible.
-vllm 0.6.6 requires torchvision==0.20.1, but you have torchvision 0.17.2+c1d70fe which is incompatible.
-```
-解决方法：编译前环境不需要vllm
 
-* 找不到vllm版本号
-解决方法：在 vllm/__init__.py 中增加一行
-```
-__version__ = "0.6.6"
-
-```
-* attention_kernels.mu找不到
+* 【20250206】attention_kernels.mu找不到
 ```
 Compiling objects...
 Using envvar MAX_JOBS (128) as the number of workers...
@@ -84,3 +70,21 @@ v0.4.2: vllm_musa.latest/csrc_musa/attention/attention_kernels.mu
 v0.6.6: vllm_musa.latest/csrc_musa/attention/attention_kernels.muh
 ```
 正在解决：
+
+* 【20250126】找不到vllm版本号
+
+解决方法：在 vllm/__init__.py 中增加一行
+```
+__version__ = "0.6.6"
+```
+
+* 【20250126】Vllm requirements 不满足
+
+```
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+vllm 0.6.6 requires nvidia-ml-py>=12.560.30, which is not installed.
+vllm 0.6.6 requires xformers==0.0.28.post3; platform_system == "Linux" and platform_machine == "x86_64", which is not installed.
+vllm 0.6.6 requires torch==2.5.1, but you have torch 2.2.0a0+git8ac9b20 which is incompatible.
+vllm 0.6.6 requires torchvision==0.20.1, but you have torchvision 0.17.2+c1d70fe which is incompatible.
+```
+解决方法：编译前环境不需要vllm
