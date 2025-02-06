@@ -22,6 +22,7 @@ registry.mthreads.com/mcconline/musa-pytorch-release-public:rc3.1.0-v1.3.0-S4000
 
 ```
 cd vllm_musa_v0.6.6
+# vllm 编译 
 bash build_musa.sh
 ```
 
