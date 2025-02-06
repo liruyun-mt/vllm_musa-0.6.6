@@ -1,0 +1,79 @@
+
+#ifndef _data_types_cuh
+#define _data_types_cuh
+#include "marlin.cuh"
+#include <musa_fp16.h>
+#include <musa_bf16.h>
+
+namespace marlin {
+
+template <typename scalar_t>
+class ScalarType {};
+
+template <>
+class ScalarType<half> {
+ public:
+  using scalar_t = half;
+  using scalar_t2 = half2;
+
+  // Matrix fragments for tensor core instructions; their precise layout is
+  // documented here:
+  // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#matrix-fragments-for-mma-m16n8k16-with-floating-point-type
+  using FragA = Vec<half2, 4>;
+  using FragB = Vec<half2, 2>;
+  using FragC = Vec<float, 4>;
+  using FragS = Vec<half2, 1>;
+  using FragZP = Vec<half2, 4>;
+
+  static __device__ float inline num2float(const half x) {
+    return __half2float(x);
+  }
+
+  static __device__ half2 inline num2num2(const half x) {
+    return __half2half2(x);
+  }
+
+  static __device__ half2 inline nums2num2(const half x1, const half x2) {
+    return __halves2half2(x1, x2);
+  }
+
+  static __host__ __device__ half inline float2num(const float x) {
+    return __float2half(x);
+  }
+};
+
+template <>
+class ScalarType<mt_bfloat16> {
+ public:
+  using scalar_t = mt_bfloat16;
+  using scalar_t2 = mt_bfloat162;
+
+  using FragA = Vec<mt_bfloat162, 4>;
+  using FragB = Vec<mt_bfloat162, 2>;
+  using FragC = Vec<float, 4>;
+  using FragS = Vec<mt_bfloat162, 1>;
+  using FragZP = Vec<mt_bfloat162, 4>;
+
+#if defined(__MUSA_ARCH__) && __MUSA_ARCH__ >= 800
+  static __device__ float inline num2float(const mt_bfloat16 x) {
+    return __bfloat162float(x);
+  }
+
+  static __device__ mt_bfloat162 inline num2num2(const mt_bfloat16 x) {
+    return __bfloat162bfloat162(x);
+  }
+
+  static __device__ mt_bfloat162 inline nums2num2(const mt_bfloat16 x1,
+                                                  const mt_bfloat16 x2) {
+    return __halves2bfloat162(x1, x2);
+  }
+
+  static __host__ __device__ mt_bfloat16 inline float2num(const float x) {
+    return __float2bfloat16(x);
+  }
+#endif
+};
+
+}  // namespace marlin
+
+#endif
