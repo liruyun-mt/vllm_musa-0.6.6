@@ -74,13 +74,17 @@ ext_modules.append(
             name="vllm_C",
             sources=[
                 "csrc_musa/cache_kernels.mu",
+                #"csrc_musa/attention/attention_kernels.mu",
+                # TODO
                 "csrc_musa/attention/attention_kernels.mu",
                 "csrc_musa/pos_encoding_kernels.mu",
                 "csrc_musa/activation_kernels.mu",
                 "csrc_musa/layernorm_kernels.mu",
                 "csrc_musa/musa_utils_kernels.mu",
-                "csrc_musa/moe_align_block_size_kernels.mu",
-                "csrc_musa/pybind.cpp",
+                # "csrc_musa/moe_align_block_size_kernels.mu",
+                "csrc_musa/moe/moe_align_sum_kernels.mu",
+                # "csrc_musa/pybind.cpp",
+                "csrc_musa/torch_bindings.cpp",
                 "csrc_musa/custom_all_reduce.mu",
             ],
             extra_compile_args= {"cxx": ['-O3', '-std=c++17'],}
@@ -309,7 +313,6 @@ def find_version(filepath: str) -> str:
     Adapted from https://github.com/ray-project/ray/blob/0b190ee1160eeca9796bc091e07eaebf4c85b511/python/setup.py
     """
     with open(filepath) as fp:
-        import pdb;pdb.set_trace()
         version_match = re.search(r"^__version__ = ['\"]([^'\"]*)['\"]",
                                   fp.read(), re.M)
         if version_match:
