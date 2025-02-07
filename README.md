@@ -19,7 +19,7 @@ registry.mthreads.com/mcconline/musa-pytorch-release-public:rc3.1.0-v1.3.0-S4000
 /bin/bash
 ```
 # 使用说明
-
+## 编译
 ```
 git clone https://github.com/liruyun-mt/vllm_musa-0.6.6.git
 cd vllm_musa-0.6.6
@@ -28,9 +28,13 @@ pip3 install ray[default]==2.10.0
 pip3 install transformers==4.44.0
 bash build_musa.sh
 ```
-
-目前还有报错
-
+显示成功安装vllm v0.6.6表示编译成功
+## 推理
+目前推理报错,正在解决
+```
+  File "/opt/conda/envs/py310/lib/python3.10/site-packages/vllm/utils.py", line 1707, in resolve_obj_by_qualname
+    module_name, obj_name = qualname.rsplit(".", 1)
+```
 
 # 此仓库在vllm-v0.6.6上做了什么
 1. 使用musa_porting 自动将.cu .cuh文件转换为 .mu .muh文件，同时替换所有文件中 cuda 相关的字符串:
@@ -54,7 +58,19 @@ bash build_musa.sh
 
 # 报错记录
 
-* 【20250206】attention_kernels.mu找不到
+* 【20250207】quant_utils.cuh file not found
+
+应该是musify漏掉了，把 quant_utils.cuh 替换为 quant_utils.muh
+
+* 【20250207】error: use of undeclared identifier 'AT_MUSA_CHECK'
+  
+解决方法：csrc_musa/custom_all_reduce.mu 中 AT_MUSA_CHECK -> C10_MUSA_CHECK
+
+* 【20250207】custom_all_reduce.mu 报错
+  
+解决方法：所有报错的mu文件替换为v0.4.2的
+
+* 【20250206】attention_kernels.mu 找不到
 ```
 Compiling objects...
 Using envvar MAX_JOBS (128) as the number of workers...
@@ -66,13 +82,12 @@ Traceback (most recent call last):
     raise CalledProcessError(retcode, process.args,
 subprocess.CalledProcessError: Command '['ninja', '-v', '-j', '128']' returned non-zero exit status 1.
 ```
-
 归因：set_up.py 找不到 attention_kernels.mu，是因为 v0.4.2 升级到 v0.6.6 后，attention_kernels.cu 变成了 attention_kernels.cuh,  musify 后也只有attention_kernels.muh
 ```
 v0.4.2: vllm_musa.latest/csrc_musa/attention/attention_kernels.mu
 v0.6.6: vllm_musa.latest/csrc_musa/attention/attention_kernels.muh
 ```
-正在解决：
+解决方法：沿用v0.4.2的attention_kernels.mu
 
 * 【20250126】找不到vllm版本号
 
