@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from typing import List, Optional
 
 from vllm.sequence import SequenceGroupMetadata

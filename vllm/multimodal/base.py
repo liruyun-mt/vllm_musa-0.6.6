@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from pathlib import Path
@@ -51,6 +49,9 @@ class MultiModalPlugin(ABC):
     process the same data differently). This registry is in turn used by
     :class:`~MultiModalRegistry` which acts at a higher level
     (i.e., the modality of the data).
+
+    See also:
+        :ref:`adding-multimodal-plugin`
     """
 
     def __init__(self) -> None:
@@ -92,6 +93,10 @@ class MultiModalPlugin(ABC):
         invoked to transform the data into a dictionary of model inputs.
 
         If `None` is provided, then the default input mapper is used instead.
+
+        See also:
+            - :ref:`input-processing-pipeline`
+            - :ref:`enabling-multimodal-inputs`
         """
 
         def wrapper(model_cls: N) -> N:
@@ -124,6 +129,10 @@ class MultiModalPlugin(ABC):
 
         Raises:
             TypeError: If the data type is not supported.
+
+        See also:
+            - :ref:`input-processing-pipeline`
+            - :ref:`enabling-multimodal-inputs`
         """
 
         # Avoid circular import
@@ -180,6 +189,9 @@ class MultiModalPlugin(ABC):
         for a model class.
 
         If `None` is provided, then the default calculation is used instead.
+
+        See also:
+            :ref:`enabling-multimodal-inputs`
         """
 
         def wrapper(model_cls: N) -> N:
@@ -209,6 +221,9 @@ class MultiModalPlugin(ABC):
         If this registry is not applicable to the model, `0` is returned.
 
         The model is identified by ``model_config``.
+
+        See also:
+            :ref:`enabling-multimodal-inputs`
         """
         # Avoid circular import
         from vllm.model_executor.model_loader import get_model_architecture

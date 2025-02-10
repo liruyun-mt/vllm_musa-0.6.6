@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from dataclasses import dataclass
 from functools import cached_property
 from typing import (TYPE_CHECKING, Any, Dict, Generic, Iterable, List, Literal,
@@ -11,7 +9,7 @@ from typing_extensions import NotRequired, TypedDict, TypeVar, assert_never
 if TYPE_CHECKING:
     from vllm.multimodal import (MultiModalDataDict, MultiModalKwargs,
                                  MultiModalPlaceholderDict)
-    from vllm.multimodal.inputs import MultiModalInputs
+    from vllm.multimodal.inputs import MultiModalInputsV2
 
 
 class TextPrompt(TypedDict):
@@ -46,13 +44,13 @@ class TokensPrompt(TypedDict):
 
     multi_modal_data: NotRequired["MultiModalDataDict"]
     """
-    Optional multi-modal data to pass to the model,
+    DEPRECATED: Optional multi-modal data to pass to the model,
     if the model supports it.
     """
 
     mm_processor_kwargs: NotRequired[Dict[str, Any]]
     """
-    Optional multi-modal processor kwargs to be forwarded to the
+    DEPRECATED: Optional multi-modal processor kwargs to be forwarded to the
     multimodal input mapper & processor. Note that if multiple modalities
     have registered mappers etc for the model being considered, we attempt
     to pass the mm_processor_kwargs to each of them.
@@ -209,7 +207,7 @@ def token_inputs(
     return inputs
 
 
-DecoderOnlyInputs = Union[TokenInputs, "MultiModalInputs"]
+DecoderOnlyInputs = Union[TokenInputs, "MultiModalInputsV2"]
 """
 The inputs in :class:`~vllm.LLMEngine` before they are
 passed to the model executor.
@@ -224,14 +222,14 @@ class EncoderDecoderInputs(TypedDict):
 
     This specifies the required data for encoder-decoder models.
     """
-    encoder: Union[TokenInputs, "MultiModalInputs"]
+    encoder: Union[TokenInputs, "MultiModalInputsV2"]
     """The inputs for the encoder portion."""
 
-    decoder: Union[TokenInputs, "MultiModalInputs"]
+    decoder: Union[TokenInputs, "MultiModalInputsV2"]
     """The inputs for the decoder portion."""
 
 
-SingletonInputs = Union[TokenInputs, "MultiModalInputs"]
+SingletonInputs = Union[TokenInputs, "MultiModalInputsV2"]
 """
 A processed :class:`SingletonPrompt` which can be passed to
 :class:`vllm.sequence.Sequence`.
@@ -313,7 +311,7 @@ class SingletonInputsAdapter:
             return inputs.get("multi_modal_hashes", [])
 
         if inputs["type"] == "multimodal":
-            # only the case when we use MultiModalInputs
+            # only the case when we use MultiModalInputsV2
             return inputs.get("mm_hashes", [])  # type: ignore[return-value]
 
         assert_never(inputs)  # type: ignore[arg-type]

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 # Copied from
 # https://huggingface.co/mosaicml/mpt-7b/blob/main/configuration_mpt.py
 """A HuggingFace-style model configuration."""

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from .abstract_tool_parser import ToolParser, ToolParserManager
 from .granite_20b_fc_tool_parser import Granite20bFCToolParser
 from .granite_tool_parser import GraniteToolParser

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 # The CLI entrypoint to vLLM.
 import argparse
 import os
@@ -169,7 +167,6 @@ def main():
         "Must be a YAML with the following options:"
         "https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html#cli-reference"
     )
-
     serve_parser = make_arg_parser(serve_parser)
     serve_parser.set_defaults(dispatch_function=serve)
 

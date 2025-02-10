@@ -1,11 +1,7 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from abc import ABC, abstractmethod
 from collections import UserDict, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from functools import partial
-from itertools import accumulate
 from typing import (TYPE_CHECKING, Any, Literal, Optional, TypedDict, TypeVar,
                     Union, cast, final)
 
@@ -104,7 +100,11 @@ MultiModalDataDict: TypeAlias = Mapping[str, ModalityData[Any]]
 """
 A dictionary containing an entry for each modality type to input.
 
-The built-in modalities are defined by :class:`MultiModalDataBuiltins`.
+Note:
+    This dictionary also accepts modality keys defined outside
+    :class:`MultiModalDataBuiltins` as long as a customized plugin
+    is registered through the :class:`~vllm.multimodal.MULTIMODAL_REGISTRY`.
+    Read more on that :ref:`here <adding-multimodal-plugin>`.
 """
 
 
@@ -141,9 +141,9 @@ Uses a list instead of a tensor if the dimensions of each element do not match.
 def nested_tensors_equal(a: NestedTensors, b: NestedTensors) -> bool:
     """Equality check between :data:`NestedTensors` objects."""
     if isinstance(a, torch.Tensor):
-        return isinstance(b, torch.Tensor) and torch.equal(a, b)
+        return isinstance(b, torch.Tensor) and bool((a == b).all().item())
     elif isinstance(b, torch.Tensor):
-        return isinstance(a, torch.Tensor) and torch.equal(b, a)
+        return isinstance(a, torch.Tensor) and bool((b == a).all().item())
 
     if isinstance(a, list):
         return (isinstance(b, list)
@@ -165,120 +165,54 @@ A dictionary containing nested tensors which have been batched via
 
 @dataclass(frozen=True)
 class MultiModalFieldElem:
-    """
-    Represents a keyword argument corresponding to a multi-modal item
-    in :class:`MultiModalKwargs`.
-    """
-
-    modality: str
-    """
-    The modality of the corresponding multi-modal item.
-    Each multi-modal item can consist of multiple keyword arguments.
-    """
-
-    key: str
-    """
-    The key of this field in :class:`MultiModalKwargs`,
-    i.e. the name of the keyword argument to be passed to the model.
-    """
-
-    data: NestedTensors
-    """
-    The tensor data of this field in :class:`MultiModalKwargs`,
-    i.e. the value of the keyword argument to be passed to the model.
-    """
-
+    """Contains metadata and data of an item in :class:`MultiModalKwargs`."""
     field: "BaseMultiModalField"
-    """
-    Defines how to combine the tensor data of this field with others
-    in order to batch multi-modal items together for model inference.
-    """
+    data: NestedTensors
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, self.__class__):
             return False
 
-        return ((self.modality, self.key) == (other.modality, other.key)
-                and nested_tensors_equal(self.data, other.data)
-                and type(self.field) == type(other.field))  # noqa: E721
+        return (self.field == other.field
+                and nested_tensors_equal(self.data, other.data))
 
 
 @dataclass(frozen=True)
 class BaseMultiModalField(ABC):
-    """
-    Defines how to interpret tensor data belonging to a keyword argument in
-    :class:`MultiModalKwargs` for multiple multi-modal items, and vice versa.
-    """
-
-    def _field_factory(self, *, modality: str, key: str):
-        f = partial(
-            MultiModalFieldElem,
-            modality=modality,
-            key=key,
-            field=self,
-        )
-
-        # Allow passing data as positional argument
-        def factory(data: NestedTensors) -> MultiModalFieldElem:
-            return f(data=data)
-
-        return factory
-
-    @abstractmethod
-    def build_elems(
-        self,
-        modality: str,
-        key: str,
-        data: NestedTensors,
-    ) -> Sequence[MultiModalFieldElem]:
-        """
-        Construct :class:`MultiModalFieldElem` instances to represent
-        the provided data.
-        
-        This is the inverse of :meth:`reduce_data`.
-        """
-        raise NotImplementedError
+    """Abstract base class for a field in :class:`MultiModalKwargs`."""
+    key: str
+    modality: str
 
     @abstractmethod
     def _reduce_data(self, batch: list[NestedTensors]) -> NestedTensors:
         raise NotImplementedError
 
-    def reduce_data(self, elems: list[MultiModalFieldElem]) -> NestedTensors:
-        """
-        Merge the data from multiple instances of :class:`MultiModalFieldElem`.
+    def _build_elem(self, data: NestedTensors) -> MultiModalFieldElem:
+        return MultiModalFieldElem(self, data)
 
-        This is the inverse of :meth:`build_elems`.
-        """
-        field_types = [type(item.field) for item in elems]
-        if len(set(field_types)) > 1:
-            raise ValueError(f"Cannot merge different {field_types=}")
+    def reduce(self, batch: list[MultiModalFieldElem]) -> MultiModalFieldElem:
+        """Merge multiple instances of :class:`MultiModalFieldElem` together."""
+        fields = [item.field for item in batch]
+        if len(set(fields)) > 1:
+            raise ValueError(f"Cannot merge different {fields=}")
 
-        return self._reduce_data([item.data for item in elems])
+        data = self._reduce_data([item.data for item in batch])
+
+        return self._build_elem(data)
 
 
 @dataclass(frozen=True)
 class MultiModalBatchedField(BaseMultiModalField):
     """
-    See also:
-        :func:`MultiModalFieldConfig.batched`
+    A :class:`BaseMultiModalField` implementation where an element in the batch
+    is obtained by indexing into the first dimension of the underlying data.
     """
 
-    def build_elems(
-        self,
-        modality: str,
-        key: str,
-        data: NestedTensors,
-    ) -> Sequence[MultiModalFieldElem]:
-        field_factory = self._field_factory(modality=modality, key=key)
-        return [field_factory(item) for item in data]
+    def build_elems(self, batch: NestedTensors) -> list[MultiModalFieldElem]:
+        return [self._build_elem(item) for item in batch]
 
     def _reduce_data(self, batch: list[NestedTensors]) -> NestedTensors:
         if len(batch) > 0 and is_list_of(batch, torch.Tensor, check="all"):
-            if len(batch) == 1:
-                # An optimization when `batch` contains only one tensor:
-                # - produce exactly same result as `torch.stack(batch)`
-                # - will achieve zero-copy if the tensor is contiguous
-                return batch[0].unsqueeze(0).contiguous()
             first_shape = batch[0].shape
             if all(elem.shape == first_shape for elem in batch):
                 return torch.stack(batch)
@@ -289,28 +223,19 @@ class MultiModalBatchedField(BaseMultiModalField):
 @dataclass(frozen=True)
 class MultiModalFlatField(BaseMultiModalField):
     """
-    See also:
-        :func:`MultiModalFieldConfig.flat`
-        :func:`MultiModalFieldConfig.flat_from_sizes`
+    A :class:`BaseMultiModalField` implementation where an element in the batch
+    is obtained by slicing along the first dimension of the underlying data.
     """
-    slices: Sequence[slice]
 
     def build_elems(
         self,
-        modality: str,
-        key: str,
-        data: NestedTensors,
-    ) -> Sequence[MultiModalFieldElem]:
-        field_factory = self._field_factory(modality=modality, key=key)
-        return [field_factory(data[s]) for s in self.slices]
+        batch: NestedTensors,
+        slices: Sequence[slice],
+    ) -> list[MultiModalFieldElem]:
+        return [self._build_elem(batch[slice_]) for slice_ in slices]
 
     def _reduce_data(self, batch: list[NestedTensors]) -> NestedTensors:
         if len(batch) > 0 and is_list_of(batch, torch.Tensor, check="all"):
-            if len(batch) == 1:
-                # An optimization when `batch` contains only one tensor:
-                # - produce exactly same result as `torch.concat(batch)`
-                # - will achieve zero-copy if the tensor is contiguous
-                return batch[0].contiguous()
             first_shape = batch[0].shape
             if all(elem.shape[1:] == first_shape[1:] for elem in batch):
                 return torch.concat(batch)
@@ -318,175 +243,42 @@ class MultiModalFlatField(BaseMultiModalField):
         return [e for elem in batch for e in elem]
 
 
-@dataclass(frozen=True)
-class MultiModalSharedField(BaseMultiModalField):
-    """
-    See also:
-        :func:`MultiModalFieldConfig.shared`
-    """
-    batch_size: int
-
-    def build_elems(
-        self,
-        modality: str,
-        key: str,
-        data: NestedTensors,
-    ) -> Sequence[MultiModalFieldElem]:
-        field_factory = self._field_factory(modality=modality, key=key)
-        return [field_factory(data)] * self.batch_size
-
-    def _reduce_data(self, batch: list[NestedTensors]) -> NestedTensors:
-        return batch[0]
-
-
 class MultiModalFieldConfig:
 
     @staticmethod
     def batched(modality: str):
-        """
-        Defines a field where an element in the batch is obtained by
-        indexing into the first dimension of the underlying data.
-
-        Args:
-            modality: The modality of the multi-modal item that uses this
-                keyword argument.
-
-        Example:
-
-        .. code-block::
-
-            Input:
-                Data: [[AAAA]
-                       [BBBB]
-                       [CCCC]]
-
-            Output:
-                Element 1: [AAAA]
-                Element 2: [BBBB]
-                Element 3: [CCCC]
-        """
         return MultiModalFieldConfig(
-            field=MultiModalBatchedField(),
+            field_cls=MultiModalBatchedField,
             modality=modality,
         )
 
     @staticmethod
     def flat(modality: str, slices: Sequence[slice]):
-        """
-        Defines a field where an element in the batch is obtained by
-        slicing along the first dimension of the underlying data.
-
-        Args:
-            modality: The modality of the multi-modal item that uses this
-                keyword argument.
-            slices: For each multi-modal item, a slice that is used to extract
-                the data corresponding to it.
-
-        Example:
-
-        .. code-block::
-    
-            Given:
-                slices: [slice(0, 3), slice(3, 7), slice(7, 9)]
-
-            Input:
-                Data: [AAABBBBCC]
-
-            Output:
-                Element 1: [AAA]
-                Element 2: [BBBB]
-                Element 3: [CC]
-        """
         return MultiModalFieldConfig(
-            field=MultiModalFlatField(slices=slices),
+            field_cls=MultiModalFlatField,
             modality=modality,
+            slices=slices,
         )
 
-    @staticmethod
-    def flat_from_sizes(modality: str, size_per_item: torch.Tensor):
-        """
-        Defines a field where an element in the batch is obtained by
-        slicing along the first dimension of the underlying data.
-
-        Args:
-            modality: The modality of the multi-modal item that uses this
-                keyword argument.
-            slices: For each multi-modal item, the size of the slice that
-                is used to extract the data corresponding to it.
-
-        Example:
-
-        .. code-block::
-    
-            Given:
-                size_per_item: [3, 4, 2]
-
-            Input:
-                Data: [AAABBBBCC]
-
-            Output:
-                Element 1: [AAA]
-                Element 2: [BBBB]
-                Element 3: [CC]
-    
-        See also:
-            :func:`MultiModalFieldConfig.flat`
-        """
-
-        slice_idxs = [0, *accumulate(size_per_item)]
-        slices = [
-            slice(slice_idxs[i], slice_idxs[i + 1])
-            for i in range(len(size_per_item))
-        ]
-
-        return MultiModalFieldConfig.flat(modality, slices)
-
-    @staticmethod
-    def shared(modality: str, batch_size: int):
-        """
-        Defines a field where an element in the batch is obtained by
-        taking the entirety of the underlying data.
-
-        This means that the data is the same for each element in the batch.
-
-        Args:
-            modality: The modality of the multi-modal item that uses this
-                keyword argument.
-            batch_size: The number of multi-modal items which share this data.
-
-        Example:
-
-        .. code-block::
-    
-            Given:
-                batch_size: 4
-
-            Input:
-                Data: [XYZ]
-
-            Output:
-                Element 1: [XYZ]
-                Element 2: [XYZ]
-                Element 3: [XYZ]
-                Element 4: [XYZ]
-        """
-        return MultiModalFieldConfig(
-            field=MultiModalSharedField(batch_size),
-            modality=modality,
-        )
-
-    def __init__(self, field: BaseMultiModalField, modality: str) -> None:
+    def __init__(
+        self,
+        field_cls: type[BaseMultiModalField],
+        modality: str,
+        **field_config: Any,
+    ) -> None:
         super().__init__()
 
-        self.field = field
+        self.field_cls = field_cls
         self.modality = modality
+        self.field_config = field_config
 
     def build_elems(
         self,
         key: str,
         batch: NestedTensors,
     ) -> Sequence[MultiModalFieldElem]:
-        return self.field.build_elems(self.modality, key, batch)
+        field = self.field_cls(key=key, modality=self.modality)
+        return field.build_elems(batch, **self.field_config)  # type: ignore
 
 
 class MultiModalKwargsItem(UserDict[str, MultiModalFieldElem]):
@@ -497,11 +289,11 @@ class MultiModalKwargsItem(UserDict[str, MultiModalFieldElem]):
 
     @staticmethod
     def from_elems(elems: Sequence[MultiModalFieldElem]):
-        return MultiModalKwargsItem({elem.key: elem for elem in elems})
+        return MultiModalKwargsItem({elem.field.key: elem for elem in elems})
 
     @property
     def modality(self) -> str:
-        modalities = {elem.modality for elem in self.data.values()}
+        modalities = {elem.field.modality for elem in self.data.values()}
         assert len(modalities) == 1, f"Found different modalities={modalities}"
         return next(iter(modalities))
 
@@ -561,7 +353,7 @@ class MultiModalKwargs(UserDict[str, NestedTensors]):
                 elems_by_key[key].append(elem)
 
         data = {
-            key: elems[0].field.reduce_data(elems)
+            key: elems[0].field.reduce(elems).data
             for key, elems in elems_by_key.items() if len(elems) > 0
         }
 
@@ -606,12 +398,6 @@ class MultiModalKwargs(UserDict[str, NestedTensors]):
             return stacked
 
         tensors_ = cast(list[torch.Tensor], stacked)
-        if len(tensors_) == 1:
-            # An optimization when `tensors_` contains only one tensor:
-            # - produce exactly same result as `torch.stack(tensors_)`
-            # - will achieve zero-copy if the tensor is contiguous
-            return tensors_[0].unsqueeze(0).contiguous()
-
         if any(t.shape != tensors_[0].shape for t in tensors_):
             # The tensors have incompatible shapes and can't be stacked.
             return tensors_
@@ -705,14 +491,13 @@ class MultiModalKwargs(UserDict[str, NestedTensors]):
 
 MultiModalPlaceholderDict = Mapping[str, Sequence[PlaceholderRange]]
 """
-A dictionary containing placeholder ranges for each modality.
+A dictionary containing placeholder ranges.
 """
 
 
-class MultiModalInputs(TypedDict):
+class MultiModalInputsV2(TypedDict):
     """
-    Represents the outputs of
-    :class:`vllm.multimodal.processing.BaseMultiModalProcessor`,
+    Represents the outputs of :class:`vllm.multimodal.MultiModalProcessor`,
     ready to be passed to vLLM internals.
     """
 

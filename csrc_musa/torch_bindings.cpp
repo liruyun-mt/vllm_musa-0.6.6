@@ -1,5 +1,7 @@
 #include "cache.h"
-#include "cuda_utils.h"
+#include "musa_utils.h"
+
+// #include "cuda_utils.h"
 #include "ops.h"
 #include "core/registration.h"
 
@@ -36,19 +38,19 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "    int blocksparse_head_sliding_step) -> ()");
   ops.impl("paged_attention_v1", torch::kCUDA, &paged_attention_v1);
 
-  // PagedAttention V2.
-  ops.def(
-      "paged_attention_v2("
-      "    Tensor! out, Tensor! exp_sums, Tensor! max_logits,"
-      "    Tensor! tmp_out, Tensor query, Tensor key_cache,"
-      "    Tensor value_cache, int num_kv_heads, float scale,"
-      "    Tensor block_tables, Tensor seq_lens, int block_size,"
-      "    int max_seq_len, Tensor? alibi_slopes,"
-      "    str kv_cache_dtype, float k_scale, float v_scale,"
-      "    int tp_rank, int blocksparse_local_blocks,"
-      "    int blocksparse_vert_stride, int blocksparse_block_size,"
-      "    int blocksparse_head_sliding_step) -> ()");
-  ops.impl("paged_attention_v2", torch::kCUDA, &paged_attention_v2);
+//   // PagedAttention V2.
+//   ops.def(
+//       "paged_attention_v2("
+//       "    Tensor! out, Tensor! exp_sums, Tensor! max_logits,"
+//       "    Tensor! tmp_out, Tensor query, Tensor key_cache,"
+//       "    Tensor value_cache, int num_kv_heads, float scale,"
+//       "    Tensor block_tables, Tensor seq_lens, int block_size,"
+//       "    int max_seq_len, Tensor? alibi_slopes,"
+//       "    str kv_cache_dtype, float k_scale, float v_scale,"
+//       "    int tp_rank, int blocksparse_local_blocks,"
+//       "    int blocksparse_vert_stride, int blocksparse_block_size,"
+//       "    int blocksparse_head_sliding_step) -> ()");
+//   ops.impl("paged_attention_v2", torch::kCUDA, &paged_attention_v2);
 
   // Activation ops
   // Activation function used in SwiGLU.
@@ -80,23 +82,23 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.impl("gelu_quick", torch::kCUDA, &gelu_quick);
 
   // prepare_inputs advance_step
-  ops.def(
-      "advance_step_flashattn(int num_seqs, int num_queries, int block_size, "
-      "Tensor! input_tokens, Tensor sampled_token_ids, "
-      "Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping, "
-      "Tensor block_tables) -> ()");
-  ops.impl("advance_step_flashattn", torch::kCUDA, &advance_step_flashattn);
+//   ops.def(
+//       "advance_step_flashattn(int num_seqs, int num_queries, int block_size, "
+//       "Tensor! input_tokens, Tensor sampled_token_ids, "
+//       "Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping, "
+//       "Tensor block_tables) -> ()");
+//   ops.impl("advance_step_flashattn", torch::kCUDA, &advance_step_flashattn);
 
-  ops.def(
-      "advance_step_flashinfer("
-      "    int num_seqs, int num_queries, int block_size,"
-      "    Tensor! input_tokens, Tensor sampled_token_ids,"
-      "    Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping,"
-      "    Tensor block_tables, Tensor! paged_kv_indices,"
-      "    Tensor! paged_kv_indptr, Tensor! paged_kv_last_page_len,"
-      "    Tensor! block_table_bounds"
-      ") -> ()");
-  ops.impl("advance_step_flashinfer", torch::kCUDA, &advance_step_flashinfer);
+//   ops.def(
+//       "advance_step_flashinfer("
+//       "    int num_seqs, int num_queries, int block_size,"
+//       "    Tensor! input_tokens, Tensor sampled_token_ids,"
+//       "    Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping,"
+//       "    Tensor block_tables, Tensor! paged_kv_indices,"
+//       "    Tensor! paged_kv_indptr, Tensor! paged_kv_last_page_len,"
+//       "    Tensor! block_table_bounds"
+//       ") -> ()");
+//   ops.impl("advance_step_flashinfer", torch::kCUDA, &advance_step_flashinfer);
 
   // Layernorm
   // Apply Root Mean Square (RMS) Normalization to the input tensor.
@@ -318,8 +320,8 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
 
   // Check if cutlass scaled_mm is supported for CUDA devices of the given
   // capability
-  ops.def("cutlass_scaled_mm_supports_fp8(int cuda_device_capability) -> bool");
-  ops.impl("cutlass_scaled_mm_supports_fp8", &cutlass_scaled_mm_supports_fp8);
+  // ops.def("cutlass_scaled_mm_supports_fp8(int cuda_device_capability) -> bool");
+  // ops.impl("cutlass_scaled_mm_supports_fp8", &cutlass_scaled_mm_supports_fp8);
 
   // Check if cutlass sparse scaled_mm is supported for CUDA devices of the
   // given capability
@@ -382,21 +384,21 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   // Quantized GEMM for GPTQ.
   // Note: even though the C++ inferred schema is correct for this op, it seems
   // to prevent the meta function registry.
-  ops.def(
-      "gptq_gemm(Tensor a, Tensor b_q_weight, Tensor b_gptq_qzeros, "
-      "Tensor b_gptq_scales, Tensor b_g_idx, bool use_exllama, int bit) "
-      "-> Tensor");
-  ops.impl("gptq_gemm", torch::kCUDA, &gptq_gemm);
+//   ops.def(
+//       "gptq_gemm(Tensor a, Tensor b_q_weight, Tensor b_gptq_qzeros, "
+//       "Tensor b_gptq_scales, Tensor b_g_idx, bool use_exllama, int bit) "
+//       "-> Tensor");
+//   ops.impl("gptq_gemm", torch::kCUDA, &gptq_gemm);
 
   // Post processing for GPTQ.
   ops.def("gptq_shuffle(Tensor! q_weight, Tensor q_perm, int bit) -> ()");
   ops.impl("gptq_shuffle", torch::kCUDA, &gptq_shuffle);
 
   // Compute FP8 quantized tensor for given scaling factor.
-  ops.def(
-      "static_scaled_fp8_quant(Tensor! result, Tensor input, Tensor scale) -> "
-      "()");
-  ops.impl("static_scaled_fp8_quant", torch::kCUDA, &static_scaled_fp8_quant);
+//   ops.def(
+//       "static_scaled_fp8_quant(Tensor! result, Tensor input, Tensor scale) -> "
+//       "()");
+//   ops.impl("static_scaled_fp8_quant", torch::kCUDA, &static_scaled_fp8_quant);
 
   // Compute dynamic-per-tensor FP8 quantized tensor and scaling factor.
   ops.def(

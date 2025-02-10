@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
 """A centralized entrypoint to perform distributed KV cache transfer.
 
 This implementation is a shim wrapper on two APIs exposed by `kv_connector`:

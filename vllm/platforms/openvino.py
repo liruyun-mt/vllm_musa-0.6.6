@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from typing import TYPE_CHECKING, Optional
 
 import torch
@@ -30,14 +28,10 @@ class OpenVinoPlatform(Platform):
     dispatch_key: str = "CPU"
 
     @classmethod
-    def get_attn_backend_cls(cls, selected_backend: _Backend, head_size: int,
-                             dtype: torch.dtype, kv_cache_dtype: Optional[str],
-                             block_size: int, use_v1: bool,
-                             use_mla: bool) -> str:
+    def get_default_attn_backend(cls, selected_backend: _Backend) -> _Backend:
         if selected_backend != _Backend.OPENVINO:
             logger.info("Cannot use %s backend on OpenVINO.", selected_backend)
-        logger.info("Using OpenVINO Attention backend.")
-        return "vllm.attention.backends.openvino.OpenVINOAttentionBackend"
+        return _Backend.OPENVINO
 
     @classmethod
     def get_device_name(cls, device_id: int = 0) -> str:
@@ -69,8 +63,9 @@ class OpenVinoPlatform(Platform):
         from vllm.utils import GiB_bytes
 
         parallel_config = vllm_config.parallel_config
-        assert (parallel_config.world_size == 1
-                ), "OpenVINO only supports single CPU socket currently."
+        assert (
+            parallel_config.world_size == 1
+        ), "OpenVINOExecutor only supports single CPU socket currently."
 
         if parallel_config.worker_cls == "auto":
             parallel_config.worker_cls = \
@@ -143,10 +138,3 @@ class OpenVinoPlatform(Platform):
             raise RuntimeError(
                 "Invalid environment variable VLLM_OPENVINO_KVCACHE_SPACE"
                 f" {kv_cache_space}, expect a positive integer value.")
-
-        assert vllm_config.device_config.device_type == "openvino"
-        assert vllm_config.lora_config is None, \
-            "OpenVINO backend doesn't support LoRA"
-        assert cls.is_openvino_cpu() or \
-            cls.is_openvino_gpu(), \
-            "OpenVINO backend supports only CPU and GPU devices"

@@ -2,7 +2,7 @@
 #include "torch_musa/csrc/aten/musa/MUSAContext.h"
 #include "torch_musa/csrc/core/MUSAGuard.h"
 
-#include "cuda_compat.h"
+#include "musa_compat.h"
 #include "dispatch_utils.h"
 
 #ifdef USE_ROCM

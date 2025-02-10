@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import abc
 import operator
 from abc import abstractmethod

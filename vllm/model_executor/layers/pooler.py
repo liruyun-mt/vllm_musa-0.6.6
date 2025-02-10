@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from enum import IntEnum
 from typing import List, Optional, Union
 

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from typing import List
 from typing import Sequence as GenericSequence
 from typing import cast

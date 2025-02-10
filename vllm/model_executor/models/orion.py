@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 # Adapted from
 # https://huggingface.co/OrionStarAI/Orion-14B-Base/blob/main/modeling_orion.py
 # Copyright (c) OrionStar Inc.

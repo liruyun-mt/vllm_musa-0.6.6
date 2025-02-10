@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import functools
 from collections import UserDict
 from dataclasses import dataclass
@@ -14,7 +12,7 @@ from vllm.logger import init_logger
 from vllm.transformers_utils.processor import cached_get_processor
 from vllm.transformers_utils.tokenizer import AnyTokenizer
 from vllm.utils import (ClassRegistry, get_allowed_kwarg_only_overrides,
-                        resolve_mm_processor_kwargs)
+                        print_warning_once, resolve_mm_processor_kwargs)
 
 from .data import ProcessorInputs, SingletonInputs
 from .parse import is_encoder_decoder_inputs
@@ -29,17 +27,6 @@ logger = init_logger(__name__)
 
 C = TypeVar("C", bound=PretrainedConfig, default=PretrainedConfig)
 P = TypeVar("P", bound=ProcessorMixin, default=ProcessorMixin)
-
-
-class HashableDict(dict):
-    """
-    A dictionary that can be hashed by lru_cache.
-    """
-
-    # NOTE: pythonic dict is not hashable,
-    # we override on it directly for simplicity
-    def __hash__(self) -> int:  # type: ignore[override]
-        return hash(frozenset(self.items()))
 
 
 @dataclass(frozen=True)
@@ -114,13 +101,6 @@ class InputContext:
 
         if isinstance(typ, type):
             merged_kwargs["processor_cls"] = typ
-
-        # NOTE: Pythonic dict is not hashable and will raise unhashable type
-        # error when calling `cached_get_processor`, therefore we need to
-        # wrap it to a hashable dict.
-        for key, value in merged_kwargs.items():
-            if isinstance(value, dict):
-                merged_kwargs[key] = HashableDict(value)
 
         hf_processor = cached_get_processor(
             self.model_config.model,
@@ -333,6 +313,9 @@ class InputRegistry:
 
         The model is identified by ``model_config``.
 
+        See also:
+            :ref:`enabling-multimodal-inputs`
+
         Note:
             This should be called after
             :meth:`~MultiModalRegistry.init_mm_limits_per_prompt`.
@@ -340,7 +323,6 @@ class InputRegistry:
         # Avoid circular import
         from vllm.model_executor.model_loader import get_model_architecture
         from vllm.multimodal import MultiModalKwargs
-        from vllm.multimodal.profiling import MultiModalProfiler
         from vllm.multimodal.utils import cached_get_tokenizer
 
         if mm_registry.has_processor(model_config):
@@ -349,8 +331,7 @@ class InputRegistry:
                 trust_remote_code=model_config.trust_remote_code,
             )
             processor = mm_registry.create_processor(model_config, tokenizer)
-            profiler = MultiModalProfiler(processor)
-            dummy_data = profiler.get_dummy_data(seq_len)
+            dummy_data = processor.get_dummy_data(seq_len)
         else:
             model_cls, _ = get_model_architecture(model_config)
             if is_encoder_data:
@@ -369,7 +350,7 @@ class InputRegistry:
         num_tokens = dummy_data.seq_data.prompt_token_ids
         if len(num_tokens) < seq_len:
             if is_encoder_data:
-                logger.warning_once(
+                print_warning_once(
                     f"Expected at least {seq_len} dummy encoder tokens for "
                     f"profiling, but found {len(num_tokens)} tokens instead.")
             else:
@@ -401,8 +382,10 @@ class InputRegistry:
         Register an input processor to a model class.
 
         The provided function is invoked on each input to the model. This
-        happens before
-        :meth:`~vllm.multimodal.registry.MultiModalRegistry.map_input`.
+        happens before :meth:`~vllm.multimodal.MultiModalRegistry.map_input`.
+
+        See also:
+            :ref:`input-processing-pipeline`
         """
 
         def wrapper(model_cls: N) -> N:
@@ -444,6 +427,9 @@ class InputRegistry:
         Apply an input processor to an instance of model inputs.
 
         The model is identified by ``model_config``.
+
+        See also:
+            :ref:`input-processing-pipeline`
         """
         # Avoid circular import
         from vllm.model_executor.model_loader import get_model_architecture

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import os
 
 from triton.runtime.cache import (FileCacheManager, default_cache_dir,

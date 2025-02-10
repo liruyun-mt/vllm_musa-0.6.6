@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import os
 from functools import lru_cache
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -66,22 +64,13 @@ class RocmPlatform(Platform):
     device_name: str = "rocm"
     device_type: str = "cuda"
     dispatch_key: str = "CUDA"
-    ray_device_key: str = "GPU"
-    # rocm shares the same device control env var as CUDA
-    device_control_env_var: str = "CUDA_VISIBLE_DEVICES"
-
     supported_quantization: list[str] = [
         "awq", "gptq", "fp8", "compressed_tensors", "compressed-tensors",
-        "fbgemm_fp8", "gguf", "quark"
+        "fbgemm_fp8", "gguf"
     ]
 
     @classmethod
-    def get_attn_backend_cls(cls, selected_backend, head_size, dtype,
-                             kv_cache_dtype, block_size, use_v1,
-                             use_mla) -> str:
-        if use_mla:
-            logger.info("Using Triton MLA backend.")
-            return "vllm.attention.backends.triton_mla.TritonMLABackend"
+    def get_default_attn_backend(cls, selected_backend: _Backend) -> _Backend:
         selected_backend = (_Backend.ROCM_FLASH if selected_backend
                             == _Backend.FLASH_ATTN else selected_backend)
         if selected_backend == _Backend.ROCM_FLASH:
@@ -90,8 +79,7 @@ class RocmPlatform(Platform):
                 logger.info("flash_attn is not supported on NAVI GPUs.")
         else:
             logger.info("%s is not supported in AMD GPUs.", selected_backend)
-        logger.info("Using ROCmFlashAttention backend.")
-        return "vllm.attention.backends.rocm_flash_attn.ROCmFlashAttentionBackend"  # noqa: E501
+        return _Backend.ROCM_FLASH
 
     @classmethod
     @lru_cache(maxsize=8)
@@ -159,14 +147,3 @@ class RocmPlatform(Platform):
                 "Using AWQ quantization with ROCm, but VLLM_USE_TRITON_AWQ"
                 " is not set, enabling VLLM_USE_TRITON_AWQ.")
         envs.VLLM_USE_TRITON_AWQ = True
-
-    @classmethod
-    def get_punica_wrapper(cls) -> str:
-        return "vllm.lora.punica_wrapper.punica_gpu.PunicaWrapperGPU"
-
-    @classmethod
-    def get_current_memory_usage(cls,
-                                 device: Optional[torch.types.Device] = None
-                                 ) -> float:
-        torch.cuda.reset_peak_memory_stats(device)
-        return torch.cuda.max_memory_allocated(device)

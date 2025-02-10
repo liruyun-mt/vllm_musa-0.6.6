@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
 """Minimal implementation of CLIPVisionModel intended to be only used
 within a vision language model."""
 from typing import Iterable, List, Optional, Set, Tuple, Union
@@ -21,10 +20,11 @@ from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.multimodal.utils import (cached_get_tokenizer,
                                    consecutive_placeholder_ranges,
-                                   repeat_and_pad_placeholder_tokens)
+                                   repeat_and_pad_placeholder_tokens,
+                                   resolve_visual_encoder_outputs)
 from vllm.sequence import SequenceData
 
-from .vision import VisionEncoderInfo, resolve_visual_encoder_outputs
+from .vision import VisionEncoderInfo
 
 
 def get_clip_patch_grid_length(*, image_size: int, patch_size: int) -> int:

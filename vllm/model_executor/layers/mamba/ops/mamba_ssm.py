@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 # Copyright (c) 2024, Tri Dao, Albert Gu.
 # Adapted from https://github.com/state-spaces/mamba/blob/main/mamba_ssm/ops/triton/selective_state_update.py
 

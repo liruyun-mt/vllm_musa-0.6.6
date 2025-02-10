@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import argparse
 import asyncio
 import concurrent
@@ -31,14 +29,13 @@ from asyncio import FIRST_COMPLETED, AbstractEventLoop, Task
 from collections import OrderedDict, UserDict, defaultdict
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass, field
-from functools import cache, lru_cache, partial, wraps
+from functools import lru_cache, partial, wraps
 from typing import (TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable,
                     Dict, Generator, Generic, Iterator, List, Literal,
                     NamedTuple, Optional, Tuple, Type, TypeVar, Union,
                     overload)
 from uuid import uuid4
 
-import cloudpickle
 import numpy as np
 import numpy.typing as npt
 import psutil
@@ -49,11 +46,12 @@ import zmq
 import zmq.asyncio
 from packaging.version import Version
 from torch.library import Library
-from typing_extensions import Never, ParamSpec, TypeIs, assert_never
+from typing_extensions import ParamSpec, TypeIs, assert_never
 
 import vllm.envs as envs
 from vllm.logger import enable_trace_function_call, init_logger
 
+import glob
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
 
@@ -354,7 +352,7 @@ class PyObjectCache:
         self._index = 0
 
 
-@cache
+@lru_cache(maxsize=None)
 def get_max_shared_memory_bytes(gpu: int = 0) -> int:
     """Returns the maximum shared memory per thread block in bytes."""
     from vllm import _custom_ops as ops
@@ -449,7 +447,7 @@ def get_ip() -> str:
         logger.warning(
             "The environment variable HOST_IP is deprecated and ignored, as"
             " it is often used by Docker and other software to"
-            "interact with the container's network stack. Please "
+            "interact with the container's network stack. Please"
             "use VLLM_HOST_IP instead to set the IP address for vLLM processes"
             " to communicate with each other.")
     if host_ip:
@@ -527,13 +525,6 @@ def get_open_port() -> int:
 
 
 def find_process_using_port(port: int) -> Optional[psutil.Process]:
-    # TODO: We can not check for running processes with network
-    # port on macOS. Therefore, we can not have a full graceful shutdown
-    # of vLLM. For now, let's not look for processes in this case.
-    # Ref: https://www.florianreinhard.de/accessdenied-in-psutil/
-    if sys.platform.startswith("darwin"):
-        return None
-
     for conn in psutil.net_connections():
         if conn.laddr.port == port:
             try:
@@ -542,6 +533,53 @@ def find_process_using_port(port: int) -> Optional[psutil.Process]:
                 return None
     return None
 
+def find_mccl_library():
+    so_file = envs.VLLM_NCCL_SO_PATH
+    VLLM_CONFIG_ROOT = envs.VLLM_CONFIG_ROOT
+
+    # check if we have vllm-managed nccl
+    vllm_mccl_path = None
+    if torch.version.musa is not None:
+        path = os.path.expanduser(
+            f"{VLLM_CONFIG_ROOT}/vllm/nccl/libmccl.so.*")
+        files = glob.glob(path)
+        vllm_nccl_path = files[0] if files else None
+
+    # manually load the nccl library
+    if so_file:
+        logger.info(
+            "Found nccl from environment variable VLLM_NCCL_SO_PATH=%s",
+            so_file)
+    else:
+        if torch.version.musa is not None:
+            so_file = find_library("libmccl.so.2")
+        elif torch.version.hip is not None:
+            so_file = find_library("librccl.so.1")
+        else:
+            raise ValueError("NCCL only supports CUDA and ROCm backends.")
+        logger.info("Found mccl from library %s", so_file)
+    return so_file
+
+def mccl_integrity_check(filepath):
+    """
+    when the library is corrupted, we cannot catch
+    the exception in python. it will crash the process.
+    instead, we use the exit code of `ldd` to check
+    if the library is corrupted. if not, we will return
+    the version of the library.
+    """
+    exit_code = os.system(f"ldd {filepath} 2>&1 > /dev/null")
+    if exit_code != 0:
+        raise RuntimeError(f"Failed to load MCCL library from {filepath} .")
+    import ctypes
+
+    mccl = ctypes.CDLL(filepath)
+    version = ctypes.c_int()
+    mccl.mcclGetVersion.restype = ctypes.c_int
+    mccl.mcclGetVersion.argtypes = [ctypes.POINTER(ctypes.c_int)]
+    result = mccl.mcclGetVersion(ctypes.byref(version))
+    assert result == 0
+    return version.value
 
 def update_environment_variables(envs: Dict[str, str]):
     for k, v in envs.items():
@@ -561,10 +599,6 @@ def chunk_list(lst: List[T], chunk_size: int):
 def cdiv(a: int, b: int) -> int:
     """Ceiling division."""
     return -(a // -b)
-
-
-def round_up(x: int, y: int) -> int:
-    return ((x + y - 1) // y) * y
 
 
 def _generate_random_fp8(
@@ -703,7 +737,19 @@ def create_kv_caches_with_random(
     return key_caches, value_caches
 
 
-@cache
+@lru_cache
+def print_info_once(msg: str) -> None:
+    # Set the stacklevel to 2 to print the caller's line info
+    logger.info(msg, stacklevel=2)
+
+
+@lru_cache
+def print_warning_once(msg: str) -> None:
+    # Set the stacklevel to 2 to print the caller's line info
+    logger.warning(msg, stacklevel=2)
+
+
+@lru_cache(maxsize=None)
 def is_pin_memory_available() -> bool:
     from vllm.platforms import current_platform
     return current_platform.is_pin_memory_available()
@@ -716,8 +762,18 @@ class DeviceMemoryProfiler:
 
     def current_memory_usage(self) -> float:
         # Return the memory usage in bytes.
+        torch.musa.reset_peak_memory_stats(self.device)
+        mem = torch.musa.max_memory_allocated(self.device)
+        return mem
+        
         from vllm.platforms import current_platform
-        return current_platform.get_current_memory_usage(self.device)
+        if current_platform.is_cuda_alike():
+            torch.cuda.reset_peak_memory_stats(self.device)
+            mem = torch.cuda.max_memory_allocated(self.device)
+        elif current_platform.is_xpu():
+            torch.xpu.reset_peak_memory_stats(self.device)  # type: ignore
+            mem = torch.xpu.max_memory_allocated(self.device)  # type: ignore
+        return mem
 
     def __enter__(self):
         self.initial_memory = self.current_memory_usage()
@@ -796,12 +852,6 @@ def async_tensor_h2d(
 def get_dtype_size(dtype: torch.dtype) -> int:
     """Get the size of the data type in bytes."""
     return torch.tensor([], dtype=dtype).element_size()
-
-
-def align_to_256bytes(extent: int, dtype: torch.dtype) -> int:
-    dtype_size = get_dtype_size(dtype)
-    eles_per_256bytes = 256 // dtype_size
-    return round_up(extent, eles_per_256bytes)
 
 
 # `collections` helpers
@@ -898,7 +948,7 @@ def init_cached_hf_modules() -> None:
     init_hf_modules()
 
 
-@cache
+@lru_cache(maxsize=None)
 def find_library(lib_name: str) -> str:
     """
     Find the library file in the system.
@@ -949,39 +999,6 @@ def find_nccl_library() -> str:
             raise ValueError("NCCL only supports CUDA and ROCm backends.")
         logger.info("Found nccl from library %s", so_file)
     return so_file
-
-
-prev_set_stream = torch.cuda.set_stream
-
-_current_stream = None
-
-
-def _patched_set_stream(stream: torch.cuda.Stream) -> None:
-    global _current_stream
-    _current_stream = stream
-    prev_set_stream(stream)
-
-
-torch.cuda.set_stream = _patched_set_stream
-
-
-def current_stream() -> torch.cuda.Stream:
-    """
-    replace `torch.cuda.current_stream()` with `vllm.utils.current_stream()`.
-    it turns out that `torch.cuda.current_stream()` is quite expensive,
-    as it will construct a new stream object at each call.
-    here we patch `torch.cuda.set_stream` to keep track of the current stream
-    directly, so that we can avoid calling `torch.cuda.current_stream()`.
-
-    the underlying hypothesis is that we do not call `torch._C._cuda_setStream`
-    from C/C++ code.
-    """
-    global _current_stream
-    if _current_stream is None:
-        # when this function is called before any stream is set,
-        # we return the default stream.
-        _current_stream = torch.cuda.current_stream()
-    return _current_stream
 
 
 def enable_trace_function_call_for_thread(vllm_config: "VllmConfig") -> None:
@@ -1619,7 +1636,7 @@ def import_from_path(module_name: str, file_path: Union[str, os.PathLike]):
     return module
 
 
-@cache
+@lru_cache(maxsize=None)
 def get_vllm_optional_dependencies():
     metadata = importlib.metadata.metadata("vllm")
     requirements = metadata.get_all("Requires-Dist", [])
@@ -1634,183 +1651,24 @@ def get_vllm_optional_dependencies():
     }
 
 
-class _PlaceholderBase:
-    """
-    Disallows downstream usage of placeholder modules.
-
-    We need to explicitly override each dunder method because
-    :meth:`__getattr__` is not called when they are accessed.
-
-    See also:
-        [Special method lookup](https://docs.python.org/3/reference/datamodel.html#special-lookup)
-    """
-
-    def __getattr__(self, key: str) -> Never:
-        """
-        The main class should implement this to throw an error
-        for attribute accesses representing downstream usage.
-        """
-        raise NotImplementedError
-
-    # [Basic customization]
-
-    def __lt__(self, other: object):
-        return self.__getattr__("__lt__")
-
-    def __le__(self, other: object):
-        return self.__getattr__("__le__")
-
-    def __eq__(self, other: object):
-        return self.__getattr__("__eq__")
-
-    def __ne__(self, other: object):
-        return self.__getattr__("__ne__")
-
-    def __gt__(self, other: object):
-        return self.__getattr__("__gt__")
-
-    def __ge__(self, other: object):
-        return self.__getattr__("__ge__")
-
-    def __hash__(self):
-        return self.__getattr__("__hash__")
-
-    def __bool__(self):
-        return self.__getattr__("__bool__")
-
-    # [Callable objects]
-
-    def __call__(self, *args: object, **kwargs: object):
-        return self.__getattr__("__call__")
-
-    # [Container types]
-
-    def __len__(self):
-        return self.__getattr__("__len__")
-
-    def __getitem__(self, key: object):
-        return self.__getattr__("__getitem__")
-
-    def __setitem__(self, key: object, value: object):
-        return self.__getattr__("__setitem__")
-
-    def __delitem__(self, key: object):
-        return self.__getattr__("__delitem__")
-
-    # __missing__ is optional according to __getitem__ specification,
-    # so it is skipped
-
-    # __iter__ and __reversed__ have a default implementation
-    # based on __len__ and __getitem__, so they are skipped.
-
-    # [Numeric Types]
-
-    def __add__(self, other: object):
-        return self.__getattr__("__add__")
-
-    def __sub__(self, other: object):
-        return self.__getattr__("__sub__")
-
-    def __mul__(self, other: object):
-        return self.__getattr__("__mul__")
-
-    def __matmul__(self, other: object):
-        return self.__getattr__("__matmul__")
-
-    def __truediv__(self, other: object):
-        return self.__getattr__("__truediv__")
-
-    def __floordiv__(self, other: object):
-        return self.__getattr__("__floordiv__")
-
-    def __mod__(self, other: object):
-        return self.__getattr__("__mod__")
-
-    def __divmod__(self, other: object):
-        return self.__getattr__("__divmod__")
-
-    def __pow__(self, other: object, modulo: object = ...):
-        return self.__getattr__("__pow__")
-
-    def __lshift__(self, other: object):
-        return self.__getattr__("__lshift__")
-
-    def __rshift__(self, other: object):
-        return self.__getattr__("__rshift__")
-
-    def __and__(self, other: object):
-        return self.__getattr__("__and__")
-
-    def __xor__(self, other: object):
-        return self.__getattr__("__xor__")
-
-    def __or__(self, other: object):
-        return self.__getattr__("__or__")
-
-    # r* and i* methods have lower priority than
-    # the methods for left operand so they are skipped
-
-    def __neg__(self):
-        return self.__getattr__("__neg__")
-
-    def __pos__(self):
-        return self.__getattr__("__pos__")
-
-    def __abs__(self):
-        return self.__getattr__("__abs__")
-
-    def __invert__(self):
-        return self.__getattr__("__invert__")
-
-    # __complex__, __int__ and __float__ have a default implementation
-    # based on __index__, so they are skipped.
-
-    def __index__(self):
-        return self.__getattr__("__index__")
-
-    def __round__(self, ndigits: object = ...):
-        return self.__getattr__("__round__")
-
-    def __trunc__(self):
-        return self.__getattr__("__trunc__")
-
-    def __floor__(self):
-        return self.__getattr__("__floor__")
-
-    def __ceil__(self):
-        return self.__getattr__("__ceil__")
-
-    # [Context managers]
-
-    def __enter__(self):
-        return self.__getattr__("__enter__")
-
-    def __exit__(self, *args: object, **kwargs: object):
-        return self.__getattr__("__exit__")
-
-
-class PlaceholderModule(_PlaceholderBase):
+@dataclass(frozen=True)
+class PlaceholderModule:
     """
     A placeholder object to use when a module does not exist.
 
     This enables more informative errors when trying to access attributes
     of a module that does not exists.
     """
-
-    def __init__(self, name: str) -> None:
-        super().__init__()
-
-        # Apply name mangling to avoid conflicting with module attributes
-        self.__name = name
+    name: str
 
     def placeholder_attr(self, attr_path: str):
         return _PlaceholderModuleAttr(self, attr_path)
 
     def __getattr__(self, key: str):
-        name = self.__name
+        name = self.name
 
         try:
-            importlib.import_module(name)
+            importlib.import_module(self.name)
         except ImportError as exc:
             for extra, names in get_vllm_optional_dependencies().items():
                 if name in names:
@@ -1823,21 +1681,17 @@ class PlaceholderModule(_PlaceholderBase):
                              "when the original module can be imported")
 
 
-class _PlaceholderModuleAttr(_PlaceholderBase):
-
-    def __init__(self, module: PlaceholderModule, attr_path: str) -> None:
-        super().__init__()
-
-        # Apply name mangling to avoid conflicting with module attributes
-        self.__module = module
-        self.__attr_path = attr_path
+@dataclass(frozen=True)
+class _PlaceholderModuleAttr:
+    module: PlaceholderModule
+    attr_path: str
 
     def placeholder_attr(self, attr_path: str):
-        return _PlaceholderModuleAttr(self.__module,
-                                      f"{self.__attr_path}.{attr_path}")
+        return _PlaceholderModuleAttr(self.module,
+                                      f"{self.attr_path}.{attr_path}")
 
     def __getattr__(self, key: str):
-        getattr(self.__module, f"{self.__attr_path}.{key}")
+        getattr(self.module, f"{self.attr_path}.{key}")
 
         raise AssertionError("PlaceholderModule should not be used "
                              "when the original module can be imported")
@@ -1902,6 +1756,8 @@ def resolve_obj_by_qualname(qualname: str) -> Any:
     """
     Resolve an object by its fully qualified name.
     """
+    if qualname == 'auto':
+        qualname = "vllm.worker.worker.Worker"
     module_name, obj_name = qualname.rsplit(".", 1)
     module = importlib.import_module(module_name)
     return getattr(module, obj_name)
@@ -1935,57 +1791,36 @@ def kill_process_tree(pid: int):
 @dataclass
 class MemorySnapshot:
     """Memory snapshot."""
-    torch_peak: int = 0
-    cuda_memory: int = 0
-    torch_memory: int = 0
-    non_torch_memory: int = 0
+    torch_peak_in_bytes: int = 0
+    torch_memory_in_bytes: int = 0
     timestamp: float = 0.0
-    auto_measure: bool = True
-
-    def __post_init__(self):
-        if self.auto_measure:
-            self.measure()
 
     def measure(self):
-        # we measure the torch peak memory usage via allocated_bytes,
-        # rather than `torch.cuda.memory_reserved()` .
-        # After `torch.cuda.reset_peak_memory_stats()`,
-        # `torch.cuda.memory_reserved()` will keep growing, and only shrink
-        # when we call `torch.cuda.empty_cache()` or OOM happens.
-        self.torch_peak = torch.cuda.memory_stats().get(
-            "allocated_bytes.all.peak", 0)
-
-        self.cuda_memory = torch.cuda.mem_get_info(
-        )[1] - torch.cuda.mem_get_info()[0]
-
-        # torch.cuda.memory_reserved() is how many bytes
-        # PyTorch gets from cuda (by calling cudaMalloc, etc.)
-        # this is used to measure the non-torch memory usage
-        self.torch_memory = torch.cuda.memory_reserved()
-
-        self.non_torch_memory = self.cuda_memory - self.torch_memory
+        self.torch_peak_in_bytes = torch.musa.memory_stats(
+        )["allocated_bytes.all.peak"]
+        self.torch_memory_in_bytes = torch.musa.memory_stats(
+        )["allocated_bytes.all.current"]
         self.timestamp = time.time()
 
     def __sub__(self, other: "MemorySnapshot") -> "MemorySnapshot":
+        """support a - b"""
         return MemorySnapshot(
-            torch_peak=self.torch_peak - other.torch_peak,
-            cuda_memory=self.cuda_memory - other.cuda_memory,
-            torch_memory=self.torch_memory - other.torch_memory,
-            non_torch_memory=self.non_torch_memory - other.non_torch_memory,
-            timestamp=self.timestamp - other.timestamp,
-            auto_measure=False,
-        )
+            torch_peak_in_bytes=self.torch_peak_in_bytes -
+            other.torch_peak_in_bytes,
+            torch_memory_in_bytes=self.torch_memory_in_bytes -
+            other.torch_memory_in_bytes,
+            timestamp=self.timestamp - other.timestamp)
 
 
 @dataclass
 class MemoryProfilingResult:
-    """Memory profiling result. All numbers are in bytes.
-    """
-    non_kv_cache_memory: int = 0
-    torch_peak_increase: int = 0
-    non_torch_increase: int = 0
-    weights_memory: float = 0
-    before_create: MemorySnapshot = field(default_factory=MemorySnapshot)
+    """Memory profiling result.
+    """  # noqa
+    baseline_memory_in_bytes: int = 0
+    non_kv_cache_memory_in_bytes: int = 0
+    torch_peak_increase_in_bytes: int = 0
+    non_torch_increase_in_bytes: int = 0
+    weights_memory_in_bytes: float = 0
     before_profile: MemorySnapshot = field(default_factory=MemorySnapshot)
     after_profile: MemorySnapshot = field(default_factory=MemorySnapshot)
     profile_time: float = 0.0
@@ -1993,14 +1828,18 @@ class MemoryProfilingResult:
 
 @contextlib.contextmanager
 def memory_profiling(
-        baseline_snapshot: MemorySnapshot,
-        weights_memory: int) -> Generator[MemoryProfilingResult, None, None]:
+    baseline_memory_in_bytes: int, weights_memory_in_bytes: int
+) -> Generator[MemoryProfilingResult, None, None]:
     """Memory profiling context manager.
-    baseline_snapshot: the memory snapshot before the current vLLM instance.
-    weights_memory: memory used by PyTorch when loading the model weights.
+    baseline_memory_in_bytes: memory used by all the components other than
+        the current vLLM instance. It contains: memory used by other processes, memory
+        used by another vLLM instance in the same process, etc. It is usually measured
+        before the current vLLM instance initialize the device. And we assume it is
+        constant during the profiling of the current vLLM instance.
+    weights_memory_in_bytes: memory used by PyTorch when loading the model weights.
         Note that, before loading the model weights, we also initialize the device
         and distributed environment, which may consume some memory. This part is not
-        included in the weights_memory because PyTorch does not control it.
+        included in the weights_memory_in_bytes because PyTorch does not control it.
 
     The memory in one GPU can be classified into 3 categories:
     1. memory used by anything other than the current vLLM instance.
@@ -2035,37 +1874,37 @@ def memory_profiling(
     b. 2 GiB reserved for the peak activation tensors (category 2)
     c. 1 GiB used by non-torch components (category 3)
 
-    The memory used for loading weights (a.) is directly given from the argument `weights_memory`.
+    The memory used for loading weights (a.) is directly given from the argument `weights_memory_in_bytes`.
 
-    The increase of `torch.cuda.memory_stats()["allocated_bytes.all.peak"]` during profiling gives (b.).
+    The increase of ``torch.cuda.memory_stats()["allocated_bytes.all.peak"]` after profiling gives (b.).
 
-    The increase of `non_torch_memory` from creating the current vLLM instance until after profiling to get (c.).
+    (c.) is tricky. We measure the total memory used in this GPU (`torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]`),
+    subtract the baseline memory, the memory used by the model weights, and diff of `torch.cuda.memory_stats()["allocated_bytes.all.current"]`.
     """ # noqa
-    gc.collect()
-    torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
+    torch.musa.reset_peak_memory_stats()
 
     result = MemoryProfilingResult()
 
-    result.before_create = baseline_snapshot
+    result.baseline_memory_in_bytes = baseline_memory_in_bytes
     # the part of memory used for holding the model weights
-    result.weights_memory = weights_memory
+    result.weights_memory_in_bytes = weights_memory_in_bytes
 
     result.before_profile.measure()
 
     yield result
 
     gc.collect()
-    torch.cuda.empty_cache()
+    torch.musa.empty_cache()
 
     result.after_profile.measure()
 
-    diff_profile = result.after_profile - result.before_profile
-    diff_from_create = result.after_profile - result.before_create
-    result.torch_peak_increase = diff_profile.torch_peak
-    result.non_torch_increase = diff_from_create.non_torch_memory
-    result.profile_time = diff_profile.timestamp
-    result.non_kv_cache_memory = result.non_torch_increase + result.torch_peak_increase + result.weights_memory  # noqa
+    diff = result.after_profile - result.before_profile
+    result.torch_peak_increase_in_bytes = diff.torch_peak_in_bytes
+    current_cuda_memory_bytes = torch.musa.mem_get_info(
+    )[1] - torch.musa.mem_get_info()[0]
+    result.non_torch_increase_in_bytes = current_cuda_memory_bytes - baseline_memory_in_bytes - weights_memory_in_bytes - diff.torch_memory_in_bytes  # noqa
+    result.profile_time = diff.timestamp
+    result.non_kv_cache_memory_in_bytes = result.non_torch_increase_in_bytes + result.torch_peak_increase_in_bytes + result.weights_memory_in_bytes  # noqa
 
 
 # Adapted from: https://github.com/sgl-project/sglang/blob/v0.4.1/python/sglang/srt/utils.py#L630 # noqa: E501
@@ -2162,111 +2001,3 @@ def get_mp_context():
     _check_multiproc_method()
     mp_method = envs.VLLM_WORKER_MULTIPROC_METHOD
     return multiprocessing.get_context(mp_method)
-
-
-def bind_kv_cache(
-        ctx: Dict[str, Any],
-        kv_cache: List[List[torch.Tensor]],  # [virtual_engine][layer_index]
-) -> None:
-    # Bind the kv_cache tensor to Attention modules, similar to
-    # ctx[layer_name].kv_cache[ve]=kv_cache[ve][extract_layer_index(layer_name)]
-    # Special things handled here:
-    # 1. Some models have non-attention layers, e.g., Jamba
-    # 2. Pipeline parallelism, each rank only has a subset of layers
-    # 3. Encoder attention has no kv cache
-    # 4. Encoder-decoder models, encoder-decoder attention and decoder-only
-    #    attention of the same layer (e.g., bart's decoder.layers.1.self_attn
-    #    and decoder.layers.1.encoder_attn) is mapped to the same kv cache
-    #    tensor
-    from vllm.attention import AttentionType
-    from vllm.model_executor.models.utils import extract_layer_index
-    layer_need_kv_cache = [
-        layer_name for layer_name in ctx
-        if ctx[layer_name].attn_type in (AttentionType.DECODER,
-                                         AttentionType.ENCODER_DECODER)
-    ]
-    layer_index_sorted = sorted(
-        set(
-            extract_layer_index(layer_name)
-            for layer_name in layer_need_kv_cache))
-    for layer_name in layer_need_kv_cache:
-        kv_cache_idx = layer_index_sorted.index(
-            extract_layer_index(layer_name))
-        forward_ctx = ctx[layer_name]
-        assert len(forward_ctx.kv_cache) == len(kv_cache)
-        for ve, ve_kv_cache in enumerate(kv_cache):
-            forward_ctx.kv_cache[ve] = ve_kv_cache[kv_cache_idx]
-
-
-def run_method(obj: Any, method: Union[str, bytes, Callable], args: Tuple[Any],
-               kwargs: Dict[str, Any]) -> Any:
-    """
-    Run a method of an object with the given arguments and keyword arguments.
-    If the method is string, it will be converted to a method using getattr.
-    If the method is serialized bytes and will be deserialized using
-    cloudpickle.
-    If the method is a callable, it will be called directly.
-    """
-    if isinstance(method, bytes):
-        func = partial(cloudpickle.loads(method), obj)
-    elif isinstance(method, str):
-        try:
-            func = getattr(obj, method)
-        except AttributeError:
-            raise NotImplementedError(f"Method {method!r} is not"
-                                      " implemented.") from None
-    else:
-        func = partial(method, obj)  # type: ignore
-    return func(*args, **kwargs)
-
-
-def import_pynvml():
-    """
-    Historical comments:
-
-    libnvml.so is the library behind nvidia-smi, and
-    pynvml is a Python wrapper around it. We use it to get GPU
-    status without initializing CUDA context in the current process.
-    Historically, there are two packages that provide pynvml:
-    - `nvidia-ml-py` (https://pypi.org/project/nvidia-ml-py/): The official
-        wrapper. It is a dependency of vLLM, and is installed when users
-        install vLLM. It provides a Python module named `pynvml`.
-    - `pynvml` (https://pypi.org/project/pynvml/): An unofficial wrapper.
-        Prior to version 12.0, it also provides a Python module `pynvml`,
-        and therefore conflicts with the official one. What's worse,
-        the module is a Python package, and has higher priority than
-        the official one which is a standalone Python file.
-        This causes errors when both of them are installed.
-        Starting from version 12.0, it migrates to a new module
-        named `pynvml_utils` to avoid the conflict.
-    
-    TL;DR: if users have pynvml<12.0 installed, it will cause problems.
-    Otherwise, `import pynvml` will import the correct module.
-    We take the safest approach here, to manually import the correct
-    `pynvml.py` module from the `nvidia-ml-py` package.
-    """
-    if TYPE_CHECKING:
-        import pynvml
-        return pynvml
-    if "pynvml" in sys.modules:
-        import pynvml
-        if pynvml.__file__.endswith("__init__.py"):
-            # this is pynvml < 12.0
-            raise RuntimeError(
-                "You are using a deprecated `pynvml` package. "
-                "Please uninstall `pynvml` or upgrade to at least"
-                " version 12.0. See https://pypi.org/project/pynvml "
-                "for more information.")
-        return sys.modules["pynvml"]
-    import importlib.util
-    import os
-    import site
-    for site_dir in site.getsitepackages():
-        pynvml_path = os.path.join(site_dir, "pynvml.py")
-        if os.path.exists(pynvml_path):
-            spec = importlib.util.spec_from_file_location(
-                "pynvml", pynvml_path)
-            pynvml = importlib.util.module_from_spec(spec)
-            sys.modules["pynvml"] = pynvml
-            spec.loader.exec_module(pynvml)
-            return pynvml

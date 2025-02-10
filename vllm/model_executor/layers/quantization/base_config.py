@@ -1,8 +1,6 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Mapping, Optional, Type
+from typing import Any, Dict, List, Optional, Type
 
 import torch
 from torch import nn
@@ -59,7 +57,6 @@ def method_has_implemented_embedding(
 
 class QuantizationConfig(ABC):
     """Base class for quantization configs."""
-    packed_modules_mapping: Mapping[str, List[str]] = dict()
 
     @abstractmethod
     def get_name(self) -> str:
@@ -136,6 +133,3 @@ class QuantizationConfig(ABC):
             method.
         """
         raise NotImplementedError
-
-    def get_cache_scale(self, name: str) -> Optional[str]:
-        return None

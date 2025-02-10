@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from typing import Any, Optional
 
 import msgspec
@@ -9,7 +7,7 @@ class PoolingParams(
         msgspec.Struct,
         omit_defaults=True,  # type: ignore[call-arg]
         array_like=True):  # type: ignore[call-arg]
-    """API parameters for pooling models. This is currently a placeholder.
+    """Pooling parameters for embeddings API.
 
     Attributes:
         additional_data: Any additional data needed for pooling.

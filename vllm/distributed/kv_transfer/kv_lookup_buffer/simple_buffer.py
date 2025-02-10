@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
 """
     Implements a distributed key-value (KV) cache transfer mechanism.
 

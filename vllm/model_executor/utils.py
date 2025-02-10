@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
 """Utils for model executor."""
 from typing import Any, Dict, Optional
 

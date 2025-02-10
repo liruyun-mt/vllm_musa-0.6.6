@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import asyncio
 import os
 import sys
@@ -14,10 +12,9 @@ from typing import (Any, Callable, Dict, Generic, List, Optional, TextIO,
 
 import torch
 
-from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.triton_utils.importing import HAS_TRITON
-from vllm.utils import _check_multiproc_method, get_mp_context, run_method
+from vllm.utils import _check_multiproc_method, get_mp_context
 
 if HAS_TRITON:
     from vllm.triton_utils import maybe_set_triton_cache_manager
@@ -150,8 +147,7 @@ class ProcessWorkerWrapper:
     for handling single-node multi-GPU tensor parallel."""
 
     def __init__(self, result_handler: ResultHandler,
-                 worker_factory: Callable[[VllmConfig, int], Any],
-                 vllm_config: VllmConfig, rank: int) -> None:
+                 worker_factory: Callable[[], Any]) -> None:
         self.mp = get_mp_context()
         self._task_queue = self.mp.Queue()
         self.result_queue = result_handler.result_queue
@@ -163,15 +159,13 @@ class ProcessWorkerWrapper:
                 worker_factory=worker_factory,
                 task_queue=self._task_queue,
                 result_queue=self.result_queue,
-                vllm_config=vllm_config,
-                rank=rank,
             ),
             daemon=True)
 
         self.process.start()
 
     def _enqueue_task(self, future: Union[ResultFuture, asyncio.Future],
-                      method: Union[str, bytes], args, kwargs):
+                      method: str, args, kwargs):
         task_id = uuid.uuid4()
         self.tasks[task_id] = future
         try:
@@ -182,13 +176,12 @@ class ProcessWorkerWrapper:
             del self.tasks[task_id]
             raise ChildProcessError("worker died") from e
 
-    def execute_method(self, method: Union[str, bytes], *args, **kwargs):
+    def execute_method(self, method: str, *args, **kwargs):
         future: ResultFuture = ResultFuture()
         self._enqueue_task(future, method, args, kwargs)
         return future
 
-    async def execute_method_async(self, method: Union[str, bytes], *args,
-                                   **kwargs):
+    async def execute_method_async(self, method: str, *args, **kwargs):
         future = asyncio.get_running_loop().create_future()
         self._enqueue_task(future, method, args, kwargs)
         return await future
@@ -206,11 +199,9 @@ class ProcessWorkerWrapper:
 
 
 def _run_worker_process(
-    worker_factory: Callable[[VllmConfig, int], Any],
+    worker_factory: Callable[[], Any],
     task_queue: Queue,
     result_queue: Queue,
-    vllm_config: VllmConfig,
-    rank: int,
 ) -> None:
     """Worker process event loop"""
 
@@ -221,7 +212,7 @@ def _run_worker_process(
     _add_prefix(sys.stderr, process_name, pid)
 
     # Initialize worker
-    worker = worker_factory(vllm_config, rank)
+    worker = worker_factory()
     del worker_factory
 
     # Accept tasks from the engine in task_queue
@@ -233,7 +224,8 @@ def _run_worker_process(
             exception = None
             task_id, method, args, kwargs = items
             try:
-                output = run_method(worker, method, args, kwargs)
+                executor = getattr(worker, method)
+                output = executor(*args, **kwargs)
             except SystemExit:
                 raise
             except KeyboardInterrupt:

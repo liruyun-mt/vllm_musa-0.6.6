@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from vllm.envs import VLLM_USE_MODELSCOPE
 
 if VLLM_USE_MODELSCOPE:

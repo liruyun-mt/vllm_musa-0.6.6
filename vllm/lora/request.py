@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import warnings
 from typing import Optional
 
@@ -33,7 +31,7 @@ class LoRARequest(
     base_model_name: Optional[str] = msgspec.field(default=None)
 
     def __post_init__(self):
-        if self.lora_local_path:
+        if 'lora_local_path' in self.__struct_fields__:
             warnings.warn(
                 "The 'lora_local_path' attribute is deprecated "
                 "and will be removed in a future version. "

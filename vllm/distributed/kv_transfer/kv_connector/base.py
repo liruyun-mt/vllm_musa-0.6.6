@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
 """
 KVConnectorBase Class for Distributed KV Cache & Hidden State communication
 

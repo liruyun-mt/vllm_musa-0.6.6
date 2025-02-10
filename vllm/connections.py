@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from pathlib import Path
 from typing import Mapping, MutableMapping, Optional
 from urllib.parse import urlparse
@@ -31,7 +29,7 @@ class HTTPConnection:
     # required, so that the client is only accessible inside async event loop
     async def get_async_client(self) -> aiohttp.ClientSession:
         if self._async_client is None or not self.reuse_client:
-            self._async_client = aiohttp.ClientSession(trust_env=True)
+            self._async_client = aiohttp.ClientSession()
 
         return self._async_client
 

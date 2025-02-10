@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import torch
 import torch.nn.functional as F
 from torch_xla.experimental.custom_kernel import _histogram

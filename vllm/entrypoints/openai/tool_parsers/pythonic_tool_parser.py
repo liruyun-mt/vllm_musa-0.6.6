@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import ast
 import json
 import re

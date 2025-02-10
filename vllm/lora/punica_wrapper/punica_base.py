@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
 """
 Based on:
 Chen, L., Ye, Z., Wu, Y., Zhuo, D., Ceze, L., & Krishnamurthy, A. (2023). 

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 # Adapted from
 # https://huggingface.co/nvidia/NVLM-D-72B/blob/main/configuration_nvlm_d.py
 # --------------------------------------------------------

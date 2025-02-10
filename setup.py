@@ -74,17 +74,13 @@ ext_modules.append(
             name="vllm_C",
             sources=[
                 "csrc_musa/cache_kernels.mu",
-                #"csrc_musa/attention/attention_kernels.mu",
-                # TODO
                 "csrc_musa/attention/attention_kernels.mu",
                 "csrc_musa/pos_encoding_kernels.mu",
                 "csrc_musa/activation_kernels.mu",
                 "csrc_musa/layernorm_kernels.mu",
                 "csrc_musa/musa_utils_kernels.mu",
-                # "csrc_musa/moe_align_block_size_kernels.mu",
-                "csrc_musa/moe/moe_align_sum_kernels.mu",
-                # "csrc_musa/pybind.cpp",
-                "csrc_musa/torch_bindings.cpp",
+                "csrc_musa/moe_align_block_size_kernels.mu",
+                "csrc_musa/pybind.cpp",
                 "csrc_musa/custom_all_reduce.mu",
             ],
             extra_compile_args= {"cxx": ['-O3', '-std=c++17'],}

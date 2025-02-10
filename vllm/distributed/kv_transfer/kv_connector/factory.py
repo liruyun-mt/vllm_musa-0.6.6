@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import importlib
 from typing import TYPE_CHECKING, Callable, Dict, Type
 

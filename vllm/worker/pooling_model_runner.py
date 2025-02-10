@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import dataclasses
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
@@ -107,8 +105,7 @@ class PoolingModelRunner(
         if model_input.token_types is not None:
             cross_enc_kwargs["token_type_ids"] = model_input.token_types
 
-        with set_forward_context(model_input.attn_metadata, self.vllm_config,
-                                 virtual_engine):
+        with set_forward_context(model_input.attn_metadata, self.vllm_config):
             hidden_or_intermediate_states = model_executable(
                 input_ids=model_input.input_tokens,
                 positions=model_input.input_positions,

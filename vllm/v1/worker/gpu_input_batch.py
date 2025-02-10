@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 # Datastructures defining an input batch
 
 from dataclasses import dataclass
@@ -31,9 +29,6 @@ class CachedRequestState:
     block_ids: List[int]
     num_computed_tokens: int
     output_token_ids: List[int]
-
-    mrope_positions: Optional[torch.Tensor] = None
-    mrope_position_delta: Optional[int] = None
 
     @property
     def num_tokens(self) -> int:

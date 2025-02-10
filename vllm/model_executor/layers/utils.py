@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
 """Utility methods for model layers."""
 from typing import Tuple
 

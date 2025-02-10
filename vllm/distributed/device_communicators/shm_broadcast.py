@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import os
 import pickle
 import sys
@@ -249,8 +247,7 @@ class MessageQueue:
         self.handle = Handle(
             connect_ip=connect_ip,
             local_reader_ranks=local_reader_ranks,
-            buffer_handle=self.buffer.handle()
-            if self.buffer is not None else None,
+            buffer_handle=self.buffer.handle(),
             local_subscribe_port=local_subscribe_port,
             remote_subscribe_port=remote_subscribe_port,
         )
@@ -354,8 +351,8 @@ class MessageQueue:
                     sched_yield()
 
                     # if we wait for a long time, log a message
-                    if (time.monotonic() - start_time
-                            > VLLM_RINGBUFFER_WARNING_INTERVAL * n_warning):
+                    if (time.monotonic() - start_time >
+                            VLLM_RINGBUFFER_WARNING_INTERVAL * n_warning):
                         logger.debug("No available block found in %s second. ",
                                      VLLM_RINGBUFFER_WARNING_INTERVAL)
                         n_warning += 1
@@ -412,8 +409,8 @@ class MessageQueue:
                     sched_yield()
 
                     # if we wait for a long time, log a message
-                    if (time.monotonic() - start_time
-                            > VLLM_RINGBUFFER_WARNING_INTERVAL * n_warning):
+                    if (time.monotonic() - start_time >
+                            VLLM_RINGBUFFER_WARNING_INTERVAL * n_warning):
                         logger.debug("No available block found in %s second. ",
                                      VLLM_RINGBUFFER_WARNING_INTERVAL)
                         n_warning += 1

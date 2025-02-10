@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import logging
 from typing import Any, Optional, Set, Type
 

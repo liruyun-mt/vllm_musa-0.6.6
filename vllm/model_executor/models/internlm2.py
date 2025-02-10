@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from functools import partial
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type, Union
 

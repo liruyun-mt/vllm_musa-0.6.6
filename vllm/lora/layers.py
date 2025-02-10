@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 # pylint: disable=unused-argument
 import math
 from dataclasses import dataclass
@@ -53,9 +51,6 @@ def _get_lora_device(base_layer: nn.Module) -> torch.device:
     # marlin
     elif hasattr(base_layer, "B"):
         return base_layer.B.device
-    # HQQ marlin
-    elif hasattr(base_layer, "W_q"):
-        return base_layer.W_q.device
     else:
         raise ValueError(f"Unsupported base layer: {base_layer}")
 
@@ -222,10 +217,8 @@ class VocabParallelEmbeddingWithLoRA(BaseLayerWithLoRA):
                                 lora_b.T, non_blocking=True)
         if embeddings_tensor is not None:
             self.embeddings_tensors[
-                index,
-                :embeddings_tensor.shape[0],
-                :embeddings_tensor.shape[1],
-            ].copy_(embeddings_tensor, non_blocking=True)
+                index, :embeddings_tensor.shape[0], :embeddings_tensor.
+                shape[1], ].copy_(embeddings_tensor, non_blocking=True)
             if self.embeddings_slice is not None:
                 # TODO(yard1): Optimize this copy, we don't need to copy
                 # everything, just the modified part
@@ -944,8 +937,8 @@ class LogitsProcessorWithLoRA(BaseLayerWithLoRA):
         return self.base_layer.soft_cap
 
     @property
-    def use_all_gather(self):
-        return self.base_layer.use_all_gather
+    def use_gather(self):
+        return self.base_layer.use_gather
 
     @property
     def org_vocab_size(self):
@@ -1028,10 +1021,8 @@ class LogitsProcessorWithLoRA(BaseLayerWithLoRA):
                                 lora_b.T, non_blocking=True)
         if embeddings_tensor is not None:
             self.embeddings_tensors[
-                index,
-                :embeddings_tensor.shape[0],
-                :embeddings_tensor.shape[1],
-            ] = embeddings_tensor
+                index, :embeddings_tensor.shape[0], :embeddings_tensor.
+                shape[1], ] = embeddings_tensor
 
     def _get_logits(
         self,

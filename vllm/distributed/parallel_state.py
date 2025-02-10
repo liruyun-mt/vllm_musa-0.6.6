@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 # Copyright 2023 The vLLM team.
 # Adapted from
 # https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/parallel_state.py
@@ -329,17 +327,9 @@ class GroupCoordinator:
             return input_
 
         if input_.is_cpu:
-            try:
-                import intel_extension_for_pytorch as ipex
-                ipex.distributed.all_reduce(input_, group=self.device_group)
-                return input_
-            except ImportError:
-                """
-                Intel IPEX not found. Falling back to PyTorch native 
-                all_reduce for CPU
-                """
-                torch.distributed.all_reduce(input_, group=self.device_group)
-                return input_
+            import intel_extension_for_pytorch as ipex
+            ipex.distributed.all_reduce(input_, group=self.device_group)
+            return input_
 
         if self.tpu_communicator is not None and \
             not self.tpu_communicator.disabled:
@@ -367,7 +357,10 @@ class GroupCoordinator:
             return out
         pynccl_comm = self.pynccl_comm
         assert pynccl_comm is not None
-        out = pynccl_comm.all_reduce(input_)
+        # TODO: pynccl should not use `stream=`
+        # it can just always use the current stream.
+        out = pynccl_comm.all_reduce(input_,
+                                     stream=torch.cuda.current_stream())
         if out is None:
             # fall back to the default all-reduce using PyTorch.
             # this usually happens during testing.
@@ -872,14 +865,12 @@ def init_model_parallel_group(
 ) -> GroupCoordinator:
     if use_custom_allreduce is None:
         use_custom_allreduce = _ENABLE_CUSTOM_ALL_REDUCE
-    from vllm.platforms import current_platform
     return GroupCoordinator(
         group_ranks=group_ranks,
         local_rank=local_rank,
         torch_distributed_backend=backend,
-        use_pynccl=current_platform.is_cuda_alike(),
-        use_custom_allreduce=current_platform.is_cuda_alike()
-        and use_custom_allreduce,
+        use_pynccl=True,
+        use_custom_allreduce=use_custom_allreduce,
         use_tpu_communicator=True,
         use_hpu_communicator=True,
         use_xpu_communicator=True,
@@ -901,6 +892,11 @@ get_tensor_model_parallel_group = get_tp_group
 
 _PP: Optional[GroupCoordinator] = None
 
+def get_tensor_model_parallel_cpu_group():
+    """Get the tensor model parallel cpu group the caller rank belongs to."""
+    assert _TP_CPU_GROUP is not None, (
+        "tensor model parallel cpu group is not initialized")
+    return _TP_CPU_GROUP
 
 def get_pp_group() -> GroupCoordinator:
     assert _PP is not None, (
@@ -944,11 +940,24 @@ def graph_capture(device: torch.device):
 logger = init_logger(__name__)
 
 _ENABLE_CUSTOM_ALL_REDUCE = True
+_DEVICE_WORLD_GROUP = None
+
+# duing `init_distributed_environment`, we will also initialize a
+# group with `gloo` backend, to allow direct coordination between
+# processes through the CPU.
+_CPU_WORLD_GROUP = None
+
+_LOCAL_RANK = -1
 
 
+def get_local_rank():
+    global _LOCAL_RANK
+    return _LOCAL_RANK
+    
 def set_custom_all_reduce(enable: bool):
     global _ENABLE_CUSTOM_ALL_REDUCE
     _ENABLE_CUSTOM_ALL_REDUCE = enable
+
 
 
 def init_distributed_environment(
@@ -975,6 +984,11 @@ def init_distributed_environment(
     # set the local rank
     # local_rank is not available in torch ProcessGroup,
     # see https://github.com/pytorch/pytorch/issues/122816
+    global _DEVICE_WORLD_GROUP, _CPU_WORLD_GROUP
+    _DEVICE_WORLD_GROUP = torch.distributed.group.WORLD
+    ranks = list(range(torch.distributed.get_world_size()))
+    _CPU_WORLD_GROUP = torch.distributed.new_group(ranks=ranks,
+                                                       backend="gloo")
     if local_rank == -1:
         # local rank not set, this usually happens in single-node
         # setting, where we can use rank as local rank
@@ -982,6 +996,8 @@ def init_distributed_environment(
             local_rank = envs.LOCAL_RANK
         else:
             local_rank = rank
+    global _LOCAL_RANK
+    _LOCAL_RANK = local_rank
     global _WORLD
     if _WORLD is None:
         ranks = list(range(torch.distributed.get_world_size()))
@@ -1024,8 +1040,8 @@ def initialize_model_parallel(
     backend = backend or torch.distributed.get_backend(
         get_world_group().device_group)
 
-    if (world_size
-            != tensor_model_parallel_size * pipeline_model_parallel_size):
+    if (world_size !=
+            tensor_model_parallel_size * pipeline_model_parallel_size):
         raise RuntimeError(
             f"world_size ({world_size}) is not equal to "
             f"tensor_model_parallel_size ({tensor_model_parallel_size}) x "
@@ -1079,8 +1095,8 @@ def ensure_kv_transfer_initialized(vllm_config: "VllmConfig") -> None:
         return
 
     if all([
-            vllm_config.kv_transfer_config.need_kv_parallel_group, _KV_TRANSFER
-            is None
+            vllm_config.kv_transfer_config.need_kv_parallel_group,
+            _KV_TRANSFER is None
     ]):
         _KV_TRANSFER = kv_transfer.KVTransferAgent(
             rank=get_world_group().rank,
@@ -1119,6 +1135,12 @@ def ensure_model_parallel_initialized(
 def model_parallel_is_initialized():
     """Check if tensor and pipeline parallel groups are initialized."""
     return (_TP is not None and _PP is not None)
+
+
+def get_cpu_world_group():
+    """Get the CPU world group."""
+    assert _CPU_WORLD_GROUP is not None, ("CPU world group is not initialized")
+    return _CPU_WORLD_GROUP
 
 
 _TP_STATE_PATCHED = False
@@ -1193,11 +1215,6 @@ def cleanup_dist_env_and_memory(shutdown_ray: bool = False):
     from vllm.platforms import current_platform
     if not current_platform.is_cpu():
         torch.cuda.empty_cache()
-    try:
-        torch._C._host_emptyCache()
-    except AttributeError:
-        logger.warning(
-            "torch._C._host_emptyCache() only available in Pytorch >=2.5")
 
 
 def in_the_same_node_as(pg: Union[ProcessGroup, StatelessProcessGroup],

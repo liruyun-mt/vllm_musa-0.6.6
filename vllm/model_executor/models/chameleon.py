@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 from functools import cached_property
 from typing import (Any, Dict, Iterable, List, Literal, Mapping, Optional, Set,
                     Tuple, TypedDict, Union)
@@ -13,7 +11,6 @@ from transformers import (BatchFeature, ChameleonConfig, ChameleonProcessor,
 from vllm.attention import Attention, AttentionMetadata
 from vllm.config import CacheConfig, VllmConfig
 from vllm.distributed import get_pp_group, get_tensor_model_parallel_world_size
-from vllm.logger import init_logger
 from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (MergedColumnParallelLinear,
@@ -30,21 +27,20 @@ from vllm.model_executor.model_loader.weight_utils import (
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.multimodal import MULTIMODAL_REGISTRY
-from vllm.multimodal.inputs import (MultiModalFieldConfig, MultiModalKwargs,
-                                    NestedTensors)
-from vllm.multimodal.parse import MultiModalDataItems
+from vllm.multimodal.inputs import (MultiModalDataDict, MultiModalFieldConfig,
+                                    MultiModalInputsV2, MultiModalKwargs,
+                                    NestedTensors, PlaceholderRange)
 from vllm.multimodal.processing import (BaseMultiModalProcessor,
-                                        BaseProcessingInfo, PromptReplacement,
-                                        PromptReplacementDetails)
-from vllm.multimodal.profiling import BaseDummyInputsBuilder, ProcessorInputs
+                                        MultiModalDataItems, ProcessingMixin,
+                                        PromptReplacement)
+from vllm.multimodal.profiling import BaseProfilingInfo, ProcessorInputs
 from vllm.sequence import IntermediateTensors
+from vllm.utils import print_warning_once
 
 from .interfaces import SupportsMultiModal, SupportsPP
 from .utils import (is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix, merge_multimodal_embeddings)
-
-logger = init_logger(__name__)
 
 
 class ChameleonImagePixelInputs(TypedDict):
@@ -53,38 +49,33 @@ class ChameleonImagePixelInputs(TypedDict):
     """Shape: `(batch_size * num_images, num_channels, height, width)`"""
 
 
-class ChameleonProcessingInfo(BaseProcessingInfo):
+class ChameleonProcessingMixin(ProcessingMixin):
 
-    def get_hf_config(self):
+    def _get_hf_config(self):
         return self.ctx.get_hf_config(ChameleonConfig)
 
-    def get_hf_processor(self):
+    def _get_hf_processor(self):
         return self.ctx.get_hf_processor(ChameleonProcessor)
+
+    def _get_num_image_tokens(self) -> int:
+        processor = self._get_hf_processor()
+        return processor.image_seq_length
+
+
+class ChameleonProfilingInfo(ChameleonProcessingMixin, BaseProfilingInfo):
 
     def get_supported_mm_limits(self) -> Mapping[str, Optional[int]]:
         return {"image": 1}
 
-    def get_mm_max_tokens_per_item(
-        self,
-        seq_len: int,
-        mm_counts: Mapping[str, int],
-    ) -> Mapping[str, int]:
-        return {"image": self.get_num_image_tokens()}
-
-    def get_num_image_tokens(self) -> int:
-        processor = self.get_hf_processor()
-        return processor.image_seq_length
-
-
-class ChameleonDummyInputsBuilder(
-        BaseDummyInputsBuilder[ChameleonProcessingInfo]):
+    def get_mm_max_tokens_per_item(self, seq_len: int) -> Mapping[str, int]:
+        return {"image": self._get_num_image_tokens()}
 
     def get_dummy_processor_inputs(
         self,
         seq_len: int,
         mm_counts: Mapping[str, int],
     ) -> ProcessorInputs:
-        config = self.info.get_hf_config()
+        config = self._get_hf_config()
 
         width = height = config.vq_config.resolution
         num_images = mm_counts.get("image", 0)
@@ -102,37 +93,11 @@ class ChameleonDummyInputsBuilder(
         )
 
 
-class ChameleonMultiModalProcessor(
-        BaseMultiModalProcessor[ChameleonProcessingInfo]):
+class ChameleonMultiModalProcessor(ChameleonProcessingMixin,
+                                   BaseMultiModalProcessor):
 
-    def _call_hf_processor(
-        self,
-        prompt: str,
-        mm_data: Mapping[str, object],
-        mm_kwargs: Mapping[str, object],
-    ) -> BatchFeature:
-        if not mm_data:
-            prompt_ids = self.info.get_tokenizer().encode(prompt)
-            prompt_ids = self._apply_hf_processor_tokens_only(prompt_ids)
-            return BatchFeature(dict(input_ids=[prompt_ids]), tensor_type="pt")
-
-        return super()._call_hf_processor(
-            prompt=prompt,
-            mm_data=mm_data,
-            mm_kwargs=mm_kwargs,
-        )
-
-    def _apply_hf_processor_tokens_only(
-        self,
-        prompt_tokens: list[int],
-    ) -> list[int]:
-        # HF processor adds sep token for chat mode
-        tokenizer = self.info.get_tokenizer()
-        vocab = tokenizer.get_vocab()
-
-        sep_token_id = vocab[tokenizer.sep_token]  # type: ignore
-
-        return prompt_tokens + [sep_token_id]
+    def _get_profiling_info(self) -> BaseProfilingInfo:
+        return ChameleonProfilingInfo(self.ctx)
 
     def _get_mm_fields_config(
         self,
@@ -147,27 +112,39 @@ class ChameleonMultiModalProcessor(
         hf_processor_mm_kwargs: Mapping[str, object],
         out_mm_kwargs: MultiModalKwargs,
     ) -> list[PromptReplacement]:
-        processor = self.info.get_hf_processor(**hf_processor_mm_kwargs)
-        tokenizer = self.info.get_tokenizer()
-        vocab = tokenizer.get_vocab()
-
-        image_start_id = vocab[processor.image_start_token]
-        image_token_id = vocab[processor.image_token]
-        image_end_id = vocab[processor.image_end_token]
-
-        num_image_tokens = self.info.get_num_image_tokens()
-        image_tokens = [image_token_id] * num_image_tokens
+        processor = self._get_hf_processor(**hf_processor_mm_kwargs)
 
         return [
             PromptReplacement(
                 modality="image",
-                target=[image_token_id],
-                replacement=PromptReplacementDetails(
-                    full=([image_start_id] + image_tokens + [image_end_id]),
-                    features=image_tokens,
-                ),
+                target="<image>",
+                replacement="".join([
+                    processor.image_start_token,
+                    processor.image_token * self._get_num_image_tokens(),
+                    processor.image_end_token,
+                ]),
             )
         ]
+
+    def apply(
+        self,
+        prompt_text: str,
+        mm_data: MultiModalDataDict,
+        hf_processor_mm_kwargs: Mapping[str, object],
+    ) -> MultiModalInputsV2:
+        result = super().apply(prompt_text, mm_data, hf_processor_mm_kwargs)
+
+        # Only <image> tokens should be considered as placeholders,
+        # so we ignore the image_start_token and image_end_token
+        result["mm_placeholders"] = {
+            modality: [
+                PlaceholderRange(offset=p["offset"] + 1,
+                                 length=p["length"] - 2) for p in ps
+            ]
+            for modality, ps in result["mm_placeholders"].items()
+        }
+
+        return result
 
 
 class ChameleonLayerNorm(nn.LayerNorm):
@@ -939,10 +916,7 @@ class ChameleonModel(nn.Module):
         return hidden_states
 
 
-@MULTIMODAL_REGISTRY.register_processor(
-    ChameleonMultiModalProcessor,
-    info=ChameleonProcessingInfo,
-    dummy_inputs=ChameleonDummyInputsBuilder)
+@MULTIMODAL_REGISTRY.register_processor(ChameleonMultiModalProcessor)
 class ChameleonForConditionalGeneration(nn.Module, SupportsMultiModal,
                                         SupportsPP):
 
@@ -1136,7 +1110,7 @@ class ChameleonForConditionalGeneration(nn.Module, SupportsMultiModal,
                         remapped_kv_scale_name = name.replace(
                             ".kv_scale", ".attn.kv_scale")
                         if remapped_kv_scale_name not in params_dict:
-                            logger.warning_once(
+                            print_warning_once(
                                 "Found kv scale in the checkpoint (e.g. "
                                 f"{name}), but not found the expected name in "
                                 f"the model (e.g. {remapped_kv_scale_name}). "

@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
 """A XPU worker class."""
 import gc
 import os

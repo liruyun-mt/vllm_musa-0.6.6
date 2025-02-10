@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import ctypes
 from contextlib import contextmanager
 from typing import List, Optional, Union
@@ -28,6 +26,97 @@ except Exception:
 logger = init_logger(__name__)
 
 
+_CA_HANDLE: Optional["CustomAllreduce"] = None
+_SUPPORTED_WORLD_SIZES = [2, 4, 6, 8]
+
+def init_custom_ar() -> None:
+    from vllm.distributed import (get_tensor_model_parallel_rank,
+                                  get_tensor_model_parallel_world_size)
+
+    global _CA_HANDLE
+    if _CA_HANDLE is not None:
+        return
+    rank = get_tensor_model_parallel_rank()
+    world_size = get_tensor_model_parallel_world_size()
+    if world_size == 1:
+        # No need to initialize custom allreduce for single GPU case.
+        return
+
+    if world_size not in _SUPPORTED_WORLD_SIZES:
+        logger.warning(
+            "Custom allreduce is disabled due to an unsupported world size: "
+            "%d. Supported world sizes: %s. To silence this warning, specify"
+            " disable_custom_all_reduce=True explicitly.", world_size,
+            str(_SUPPORTED_WORLD_SIZES))
+        return
+    num_dev = torch.musa.device_count()
+    # note: num dev can be larger than world_size if we're only using
+    # first few GPUs
+    if num_dev < world_size:
+        logger.warning(
+            "Cannot test GPU P2P because not all GPUs are visible to the "
+            "current process. This might be the case if 'CUDA_VISIBLE_DEVICES'"
+            " is set.")
+        return
+    # test nvlink first, this will filter out most of the cases
+    # where custom allreduce is not supported
+    cuda_visible_devices = envs.CUDA_VISIBLE_DEVICES
+    if cuda_visible_devices:
+        device_ids = list(map(int, cuda_visible_devices.split(",")))
+    else:
+        device_ids = list(range(num_dev))
+    # this checks hardware and driver support for NVLink
+    full_nvlink = _is_full_nvlink(device_ids)
+    if world_size > 2 and not full_nvlink:
+        logger.warning(
+            "Custom allreduce is disabled because it's not supported on more"
+            " than two PCIe-only GPUs. To silence this warning, specify"
+            " disable_custom_all_reduce=True explicitly.")
+        return
+    # test P2P capability, this checks software/cudaruntime support
+    # this is expensive to compute at the first time
+    # then we cache the result
+    if not _can_p2p(rank, world_size):
+        logger.warning(
+            "Custom allreduce is disabled because your platform lacks GPU P2P"
+            " capability or P2P test failed. To silence this warning, specify"
+            " disable_custom_all_reduce=True explicitly.")
+        return
+    _CA_HANDLE = CustomAllreduce(rank, world_size, full_nvlink)
+
+@contextmanager
+def _nvml():
+    try:
+        pynvml.nvmlInit()
+        yield
+    finally:
+        pynvml.nvmlShutdown()
+
+
+@_nvml()
+def _is_full_nvlink(device_ids: List[int]) -> bool:
+    """
+    query if the set of gpus are fully connected by nvlink (1 hop)
+    Note that `pynvml` is not affected by `CUDA_VISIBLE_DEVICES`,
+    so it works on real physical device ids.
+    """
+    handles = [pynvml.nvmlDeviceGetHandleByIndex(i) for i in device_ids]
+    for i, handle in enumerate(handles):
+        for j, peer_handle in enumerate(handles):
+            if i < j:
+                try:
+                    p2p_status = pynvml.nvmlDeviceGetP2PStatus(
+                        handle, peer_handle, pynvml.NVML_P2P_CAPS_INDEX_NVLINK)
+                    if p2p_status != pynvml.NVML_P2P_STATUS_OK:
+                        return False
+                except pynvml.NVMLError as error:
+                    logger.error(
+                        "NVLink detection failed. This is normal if your"
+                        " machine has no NVLink equipped.",
+                        exc_info=error)
+                    return False
+    return True
+    
 def _can_p2p(rank: int, world_size: int) -> bool:
     for i in range(world_size):
         if i == rank:

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import functools
 import struct
 from dataclasses import dataclass
@@ -123,8 +121,8 @@ class ScalarType:
             min_raw = max_raw | sign_bit_double
             return struct.unpack('!d', struct.pack('!Q', min_raw))[0]
         else:
-            assert (not self.is_signed() or self.size_bits
-                    <= 64), "Cannot represent min as a int64_t"
+            assert (not self.is_signed() or
+                    self.size_bits <= 64), "Cannot represent min as a int64_t"
 
             if self.is_signed():
                 return -(1 << (self.size_bits - 1))

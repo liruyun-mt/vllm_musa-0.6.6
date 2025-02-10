@@ -19,7 +19,7 @@
 #include <torch/all.h>
 #include "torch_musa/csrc/aten/musa/MUSAContext.h"
 #include "torch_musa/csrc/core/MUSAGuard.h"
-#include "../cuda_compat.h"
+#include "../musa_compat.h"
 
 #ifndef USE_ROCM
     #include <cub/util_type.cuh>

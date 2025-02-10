@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import logging
 import traceback
 from itertools import chain
@@ -33,8 +31,7 @@ def cuda_platform_plugin() -> Optional[str]:
     is_cuda = False
 
     try:
-        from vllm.utils import import_pynvml
-        pynvml = import_pynvml()
+        import pynvml
         pynvml.nvmlInit()
         try:
             if pynvml.nvmlDeviceGetCount() > 0:
@@ -104,10 +101,6 @@ def cpu_platform_plugin() -> Optional[str]:
     try:
         from importlib.metadata import version
         is_cpu = "cpu" in version("vllm")
-        if not is_cpu:
-            import platform
-            is_cpu = platform.machine().lower().startswith("arm")
-
     except Exception:
         pass
 
@@ -220,11 +213,8 @@ def __getattr__(name: str):
             global _init_trace
             _init_trace = "".join(traceback.format_stack())
         return _current_platform
-    elif name in globals():
-        return globals()[name]
     else:
-        raise AttributeError(
-            f"No attribute named '{name}' exists in {__name__}.")
+        return globals()[name]
 
 
 __all__ = [

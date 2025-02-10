@@ -5,7 +5,7 @@
 #include <ATen/ATen.h>
 #include <THC/THCAtomics.muh>
 
-#include "../cuda_compat.h"
+#include "../musa_compat.h"
 #include "../dispatch_utils.h"
 
 #define CEILDIV(x, y) (((x) + (y) - 1) / (y))

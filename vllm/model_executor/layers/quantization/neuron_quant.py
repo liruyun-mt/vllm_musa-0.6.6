@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import os
 from importlib.util import find_spec
 from typing import Any, Dict, List, Optional

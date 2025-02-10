@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import functools
 from typing import Callable, List, cast
 
@@ -146,7 +144,7 @@ class MultiStepOutputProcessor(SequenceGroupOutputProcessor):
     def _process_decode_and_stop(self, seq: Sequence,
                                  sampling_params: SamplingParams) -> None:
         new_char_count = 0
-        if sampling_params.detokenize and self.detokenizer:
+        if sampling_params.detokenize:
             new_char_count = self.detokenizer.decode_sequence_inplace(
                 seq, sampling_params)
 

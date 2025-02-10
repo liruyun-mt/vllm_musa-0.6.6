@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
 """Custom normalization layers."""
 from typing import Optional, Tuple, Union
 

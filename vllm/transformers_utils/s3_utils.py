@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import fnmatch
 import os
 import shutil
@@ -147,8 +145,7 @@ class S3Model:
             return
 
         for file in files:
-            destination_file = os.path.join(self.dir,
-                                            file.removeprefix(base_dir))
+            destination_file = self.dir + file.removeprefix(base_dir)
             local_dir = Path(destination_file).parent
             os.makedirs(local_dir, exist_ok=True)
             self.s3.download_file(bucket_name, file, destination_file)

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-
 import math
 from typing import Iterable, List, Optional, Set, Tuple, Union
 
@@ -22,7 +20,6 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     DEFAULT_VOCAB_PADDING_SIZE, ParallelLMHead, VocabParallelEmbedding)
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.sampling_metadata import SamplingMetadata
-from vllm.platforms import current_platform
 from vllm.sequence import IntermediateTensors
 
 from .interfaces import SupportsPP
@@ -57,12 +54,12 @@ class HeadMajorColumnParallelLinear(MergedColumnParallelLinear):
         return load_column_parallel_weight(param, loaded_weight)
 
 
-@torch.compile(dynamic=True, backend=current_platform.simple_compile_backend)
+@torch.compile(dynamic=True)
 def quick_gelu(x):
     return x * torch.sigmoid(1.702 * x)
 
 
-@torch.compile(dynamic=True, backend=current_platform.simple_compile_backend)
+@torch.compile(dynamic=True)
 def gegelu(input, limit: Optional[float] = None):
     a_gelu, a_linear = input[..., ::2], input[..., 1::2]
     if limit is not None:
@@ -475,8 +472,6 @@ class Phi3SmallForCausalLM(nn.Module, SupportsPP):
             if name.endswith(".bias") and name not in params_dict:
                 continue
             if is_pp_missing_parameter(name, self):
-                continue
-            if "lm_head.weight" in name and self.config.tie_word_embeddings:
                 continue
             param = params_dict[name]
             weight_loader = getattr(param, "weight_loader",
